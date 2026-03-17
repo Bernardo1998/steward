@@ -315,6 +315,101 @@ The proactive research agent supports structured feedback:
 
 ---
 
+## Steering a Running Task
+
+Tasks are autonomous but steerable. There are several ways to adjust what a task does, from most direct to most hands-off:
+
+### 1. Edit the state file directly
+
+Each task keeps its state in `tasks/<task_id>/state/` (typically `state.json` or `experiment_state.json`). This is the most direct control surface. The agent reads it at the start of every cycle.
+
+For experiment-style tasks, the state file contains:
+
+```json
+{
+  "status": "implementing",
+  "pending_steps": ["tune_temperature", "run_larger_dataset", "write_report"],
+  "completed_steps": ["install_packages", "smoke_test", "run_experiments"],
+  "failed_steps": ["tabebm_incompatible"],
+  "notes": "what happened last cycle"
+}
+```
+
+**Step names are free-form strings** — the agent invents them while building its plan. There is no separate step definition file. The state file IS the definition. You can:
+- Add, remove, or reorder items in `pending_steps`
+- Change `status` (e.g. from `"validating"` back to `"implementing"`)
+- Clear `failed_steps` to retry something
+- Add context in `notes` that the agent will read
+
+### 2. Edit the plan file
+
+Experiment tasks typically write a plan to their workspace (e.g. `experiments/plan.md`). The agent reads this for context on what to do and why. You can edit it to change datasets, metrics, approach, or add entirely new sections.
+
+### 3. Send an email
+
+Compose an email to the bot address with the task's subject prefix. No prior email thread needed:
+
+```
+To: yourbotaccount@gmail.com
+Subject: [EXP-TABPFN] Skip TabEBM, tune temperature on breast_cancer instead
+Body: The TabEBM path is blocked. Focus on hyperparameter tuning...
+```
+
+The task picks this up via IMAP on the next cycle and adjusts its plan.
+
+### 4. Edit `task.md`
+
+`tasks/<task_id>/task.md` contains the instructions the agent receives every cycle. Change the overall workflow, rules, or behavioral constraints here. This is the "constitution" — it shapes all future cycles.
+
+### 5. Reply to a task email
+
+When a task emails you a report, just reply. The task reads your reply on the next cycle using the same IMAP mechanism as proactive emails.
+
+---
+
+## Long-Running Tasks and the Hourly Cron
+
+### How lock files prevent double-spawning
+
+When the orchestrator spawns an agent, it creates a `.lock` file in the task directory containing `{pid, started_at, max_runtime_minutes}`. On subsequent cron cycles:
+
+1. Orchestrator checks `.lock` — does it exist?
+2. If yes, checks if the PID is still alive (`kill -0`)
+3. If alive → **task is skipped** ("locked, still running") — the existing session continues undisturbed
+4. If the process died but hasn't exceeded `max_runtime_minutes` → removes stale lock (process crashed)
+5. If exceeded → removes stale lock and logs a timeout warning
+
+This means a task can safely run for hours. The hourly cron will just skip it each time it checks.
+
+### One session does many steps
+
+Each cycle spawns **one long `codex exec` session** (not one step). The `task.md` instructs the agent to "do as many steps as you can" — so it reads `pending_steps`, works through them sequentially, and saves state between steps. If the session hits the agent's context limit or a hard timeout, it saves state and the next cycle picks up where it left off.
+
+### Configuring the timeout
+
+Set `max_runtime_minutes` in `charter.yaml` to match your task's expected duration:
+
+```yaml
+schedule:
+  frequency: "hourly"
+  max_runtime_minutes: 180    # allow up to 3 hours before considering it stale
+```
+
+If a task regularly needs more than the configured timeout, increase this value. The lock file will protect it for that duration. After expiry, the orchestrator assumes the process died and cleans up the lock so the next cycle can start fresh.
+
+### What if experiments take many hours?
+
+For truly long experiments (training runs, large-scale evaluations), the recommended pattern is:
+
+1. The agent **launches the experiment as a background process** (e.g. `nohup python train.py &`)
+2. Saves the PID or output path in state
+3. Exits the codex session (releasing the lock)
+4. On the next cycle, checks if the background process finished and processes the results
+
+This way the experiment runs independently while the agent session stays short. The orchestrator doesn't need to know about the background process — the task manages it through its state file.
+
+---
+
 ## Environment Variables
 
 | Variable | Purpose | Default |
