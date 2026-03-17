@@ -1,0 +1,13 @@
+version: 1
+defaults:
+  timezone: "America/Los_Angeles"
+  run_all_enabled: true
+
+tasks:
+  - id: "my_research"
+    enabled: true
+    schedule: "daily"
+    entrypoint: "tasks/my_research/run.py"
+    side_effects: ["write_repo_files", "network_access"]
+    budget_hint: "medium"
+    notes: "Example research task"

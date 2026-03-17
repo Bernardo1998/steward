@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "charter-worker"
+version = "0.1.0"
+description = "A charter-driven project worker framework for proactive AI agents"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+email = ["markdown>=3.4", "weasyprint>=60.0"]
+all = ["markdown>=3.4", "weasyprint>=60.0"]
+
+[project.scripts]
+charter-orchestrator = "orchestrator:main"
+
+[tool.setuptools.packages.find]
+include = ["charter_worker*"]
+
+[tool.setuptools]
+py-modules = ["orchestrator", "preflight"]

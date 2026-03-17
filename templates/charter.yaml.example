@@ -1,0 +1,11 @@
+# Project charter — defines what the proactive worker is trying to achieve
+goal: "Map the landscape of [your topic] and identify the most promising approaches"
+scope_boundaries:
+  in_scope: ["subtopic1", "subtopic2", "subtopic3"]
+  out_of_scope: ["unrelated_area"]
+autonomy_level: "investigate"   # detect | investigate | stage | execute
+constraints:
+  max_daily_budget_minutes: 30
+  require_approval_for: ["external_communication", "expensive_runs"]
+  default_on_silence: "continue_safe"
+success_criteria: "Confidence 4/5 with evidence from 3+ independent sources"
