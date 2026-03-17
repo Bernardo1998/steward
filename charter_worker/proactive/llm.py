@@ -4,6 +4,8 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 from typing import Optional
 
 
@@ -11,10 +13,13 @@ def call_llm(
     prompt: str,
     *,
     search: bool = False,
-    timeout: int = 180,
+    timeout: int = 300,
     model: Optional[str] = None,
 ) -> str:
-    """Call codex exec and return raw output."""
+    """Call codex exec and return raw output.
+
+    Uses stdin piping for the prompt (robust for any length/encoding).
+    """
     if not shutil.which("codex"):
         raise RuntimeError("codex CLI not found on PATH. Install: npm i -g @openai/codex")
 
@@ -24,9 +29,15 @@ def call_llm(
     cmd.extend(["exec", "--ephemeral", "-s", "read-only"])
     if model:
         cmd.extend(["-m", model])
-    cmd.append(prompt)
+    cmd.append("-")  # read prompt from stdin
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    result = subprocess.run(
+        cmd,
+        input=prompt,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
     output = result.stdout.strip()
     if not output:
         stderr_hint = result.stderr.strip()[:300] if result.stderr else ""

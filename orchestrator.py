@@ -194,7 +194,12 @@ def check_preflight(task_id: str, charter: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def spawn_agent(task: dict, charter: dict, date_str: str) -> subprocess.Popen:
-    """Spawn a CLI agent session for a task."""
+    """Spawn a CLI agent session for a task.
+
+    Uses stdin piping for prompts (robust for any length).
+    Codex: `codex exec` with appropriate sandbox mode.
+    Claude: `claude -p` with tool allowlist.
+    """
     task_id = task["id"]
     task_path = task["path"]
     working_dir = REPO_ROOT / task_path
@@ -207,35 +212,45 @@ def spawn_agent(task: dict, charter: dict, date_str: str) -> subprocess.Popen:
     log_file = log_dir / f"cycle_{date_str}.log"
 
     # Build prompt for the sub-agent
+    summary_dir = f"{SUMMARIES_ROOT}/{date_str}/tasks/{task_id}"
     prompt = (
         f'You are a charter worker executing task "{task_id}". '
         f'Your working directory is the current directory. '
         f'Read charter.yaml for your role and configuration. '
         f'Read task.md for detailed step-by-step instructions. '
         f'Execute ONE cycle of the workflow, then exit. '
-        f'Write your summary to: {SUMMARIES_ROOT}/{date_str}/tasks/{task_id}/summary.md '
+        f'Write your summary to: {summary_dir}/summary.md '
         f'and summary.json in the same directory. '
         f'Today is {date_str}.'
     )
 
+    # Write prompt to file so it can be piped via stdin (avoids shell escaping)
+    prompt_file = log_dir / f"prompt_{date_str}.txt"
+    prompt_file.write_text(prompt)
+
     if agent == "codex":
         sandbox_mode = execution.get("sandbox", "full-auto")
         if sandbox_mode == "none":
+            # Full access — for tasks needing IMAP/SMTP/network
             cmd = [
                 "codex", "exec",
                 "--dangerously-bypass-approvals-and-sandbox",
-                prompt,
+                "-C", str(working_dir),
+                "--add-dir", str(REPO_ROOT),
+                "-",  # read prompt from stdin
             ]
         else:
+            # Sandboxed — workspace-write via --full-auto
             cmd = [
                 "codex", "exec", "--full-auto",
+                "-C", str(working_dir),
                 "--add-dir", str(REPO_ROOT),
-                prompt,
+                "-",  # read prompt from stdin
             ]
     elif agent == "claude":
         cmd = [
-            "claude", "--print", "-p", prompt,
-            "--allowedTools", "Bash(command:*)", "Read", "Write", "Edit", "Glob", "Grep",
+            "claude", "-p", prompt,
+            "--dangerously-skip-permissions",
         ]
     else:
         print(f"  [orch] Unknown agent '{agent}' for {task_id}, skipping", file=sys.stderr)
@@ -243,12 +258,25 @@ def spawn_agent(task: dict, charter: dict, date_str: str) -> subprocess.Popen:
 
     print(f"  [orch] Spawning {agent} for {task_id} in {working_dir}", file=sys.stderr)
 
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(working_dir),
-        stdout=open(log_file, "a"),
-        stderr=subprocess.STDOUT,
-    )
+    # Open log file for output
+    log_fh = open(log_file, "a")
+
+    if agent == "codex":
+        # Pipe prompt via stdin from file
+        prompt_fh = open(prompt_file, "r")
+        proc = subprocess.Popen(
+            cmd,
+            stdin=prompt_fh,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+        )
+    else:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(working_dir),
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+        )
 
     max_runtime = charter.get("schedule", {}).get("max_runtime_minutes", 60)
     create_lock(task_path, proc.pid, max_runtime)

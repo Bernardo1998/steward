@@ -58,10 +58,11 @@ def _run_codex(
     cmd.extend(["exec", "--ephemeral", "-s", "read-only"])
     if model:
         cmd.extend(["-m", model])
-    cmd.append(prompt)
+    cmd.append("-")  # read prompt from stdin
 
     result = subprocess.run(
         cmd,
+        input=prompt,
         capture_output=True,
         text=True,
         timeout=timeout,

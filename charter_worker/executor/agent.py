@@ -17,6 +17,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -37,8 +38,8 @@ def run_agent_session(
     *,
     agent: str = "auto",
     result_file: str = ".agent_result.json",
-    timeout: int = 1800,
-    approval_mode: str = "full-auto",
+    timeout: int = 3600,
+    sandbox: str = "full-auto",
 ) -> dict:
     """Launch a full CLI agent session in a workspace.
 
@@ -51,8 +52,8 @@ def run_agent_session(
         task_prompt: Natural language task description.
         agent: "codex", "claude", or "auto" (detect).
         result_file: Where the agent writes its structured result.
-        timeout: Max seconds for the session.
-        approval_mode: Agent autonomy level.
+        timeout: Max seconds for the session (default 1 hour).
+        sandbox: Codex sandbox mode: "full-auto", "none", or a sandbox value.
 
     Returns:
         Dict with {status, result, agent_output, duration_s}.
@@ -84,17 +85,32 @@ The JSON must contain:
 }}
 """
 
+    # Write prompt to temp file for stdin piping (avoids shell escaping issues)
+    prompt_tmpfile = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", prefix="agent_prompt_", delete=False
+    )
+    prompt_tmpfile.write(full_prompt)
+    prompt_tmpfile.close()
+
     # Build command based on agent type
     if agent == "codex":
-        cmd = [
-            "codex", "--approval-mode", approval_mode,
-            "--quiet",
-            prompt_to_codex_arg(full_prompt),
-        ]
+        if sandbox == "none":
+            cmd = [
+                "codex", "exec",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "-C", str(workspace),
+                "-",  # read from stdin
+            ]
+        else:
+            cmd = [
+                "codex", "exec", "--full-auto",
+                "-C", str(workspace),
+                "-",  # read from stdin
+            ]
     elif agent == "claude":
         cmd = [
-            "claude", "--print", "-p", full_prompt,
-            "--allowedTools", "Bash(command:*)", "Read", "Write", "Edit", "Glob", "Grep",
+            "claude", "-p", full_prompt,
+            "--dangerously-skip-permissions",
         ]
     else:
         raise ValueError(f"Unknown agent: {agent}")
@@ -104,13 +120,25 @@ The JSON must contain:
 
     start = time.time()
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(workspace),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        if agent == "codex":
+            # Pipe prompt from file via stdin
+            with open(prompt_tmpfile.name, "r") as stdin_fh:
+                proc = subprocess.run(
+                    cmd,
+                    stdin=stdin_fh,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+        else:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(workspace),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+
         duration = time.time() - start
         agent_output = proc.stdout
 
@@ -155,10 +183,6 @@ The JSON must contain:
             "exit_code": -2,
         }
 
-
-def prompt_to_codex_arg(prompt: str) -> str:
-    """Format prompt for codex CLI. Codex takes the prompt as a positional arg."""
-    # codex --full-auto "prompt here"
-    # For very long prompts, codex reads from stdin via pipe, but
-    # the simple case works with a positional arg
-    return prompt
+    finally:
+        # Clean up temp file
+        Path(prompt_tmpfile.name).unlink(missing_ok=True)
