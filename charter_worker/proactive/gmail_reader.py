@@ -215,13 +215,20 @@ def fetch_ltt_replies(
     since_date: str | None = None,
     subject_prefix: str = "[LTT]",
     max_results: int = 10,
+    require_reply: bool = False,
 ) -> list[dict]:
-    """Connect to Gmail via IMAP, search for replies to LTT emails.
+    """Connect to Gmail via IMAP, search for messages with a subject prefix.
+
+    By default picks up ALL matching messages — both replies to task emails
+    AND fresh emails you compose to the bot address. This lets you send
+    proactive instructions without needing a prior task email to reply to.
 
     Args:
         since_date: "YYYY-MM-DD" format. Defaults to 3 days ago.
         subject_prefix: Filter by subject line prefix.
-        max_results: Max replies to return.
+        max_results: Max messages to return.
+        require_reply: If True, only return messages that are replies
+            (have an In-Reply-To header). False by default.
 
     Returns:
         List of {from, date, subject, body, in_reply_to, message_id, attachments} dicts.
@@ -263,9 +270,9 @@ def fetch_ltt_replies(
             msg = email_lib.message_from_bytes(msg_data[0][1])
 
             from_addr = _decode_header_value(msg.get("From", ""))
-            # Skip emails that are NOT replies (no In-Reply-To header)
             in_reply_to = msg.get("In-Reply-To", "")
-            if not in_reply_to:
+            # Optionally restrict to replies only
+            if require_reply and not in_reply_to:
                 continue
 
             body = _extract_body(msg)

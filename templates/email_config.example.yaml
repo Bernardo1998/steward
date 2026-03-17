@@ -1,0 +1,33 @@
+# Charter Worker — Email Configuration
+#
+# Copy this file to email_config.yaml in your instance root directory.
+# email_config.yaml should be gitignored (it contains credentials).
+#
+# Setup steps:
+#   1. Create a separate Gmail account for the agent (or use an existing one)
+#   2. Enable 2-Step Verification on that account
+#   3. Create an App Password: Google Account > Security > App Passwords
+#   4. Copy the 16-character App Password below
+#
+# The agent uses this account to:
+#   - Send task reports and daily digests (SMTP)
+#   - Read your replies for the email feedback loop (IMAP)
+
+sender:
+  address: "yourbotaccount@gmail.com"
+  app_password: "xxxx xxxx xxxx xxxx"    # Gmail App Password (NOT your login password)
+  smtp_server: "smtp.gmail.com"
+  smtp_port: 587
+
+# Only addresses in this list can receive emails. The agent cannot send to
+# arbitrary addresses — this is a safety mechanism.
+recipient_allowlist:
+  - "you@gmail.com"
+
+# Rate limiting prevents runaway email sends.
+rate_limit:
+  max_sends_per_day: 20       # total emails per day across all tasks
+  cooldown_seconds: 30         # minimum seconds between sends
+
+# Set to false to disable all email sending (tasks still run, just no emails)
+enabled: true

@@ -22,3 +22,8 @@ Thumbs.db
 
 # Claude Code
 .claude/
+
+# Credentials (never commit these)
+email_config.yaml
+**/google_credentials.json
+**/google_token.json
