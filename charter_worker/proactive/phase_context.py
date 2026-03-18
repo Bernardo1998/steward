@@ -116,7 +116,12 @@ def _load_context_files(project_dir: Path) -> str:
 
 
 def _check_email_replies(project_id: str, project_dir: Path, state_meta: dict) -> tuple[Optional[str], list[dict]]:
-    """Check Gmail IMAP for replies to this project's email.
+    """Check Gmail IMAP for replies/messages for this project.
+
+    Strategy: find the most recent message from the user (not the bot)
+    matching the subject prefix, that arrived after last_email_date.
+    No message-ID matching — this avoids breakage from manual sends,
+    rate-limit retries, or thread mismatches.
 
     Returns:
         (reply_body_text, attachments_list)
@@ -126,31 +131,45 @@ def _check_email_replies(project_id: str, project_dir: Path, state_meta: dict) -
         print(f"  [phase1] No previous email for {project_id}, skipping reply check", file=sys.stderr)
         return None, []
 
+    # Determine subject prefix from state or default
+    subject_prefix = state_meta.get("subject_prefix", "[LTT]")
+
     try:
-        replies = fetch_ltt_replies(since_date=last_email_date, subject_prefix="[LTT]")
+        messages = fetch_ltt_replies(since_date=last_email_date, subject_prefix=subject_prefix)
     except Exception as e:
         print(f"  [phase1] IMAP error for {project_id}: {e}", file=sys.stderr)
         return None, []
 
-    if not replies:
+    if not messages:
         return None, []
 
-    # Match by In-Reply-To header
-    thread_id_file = project_dir / "email_thread_id.txt"
-    our_message_id = thread_id_file.read_text().strip() if thread_id_file.exists() else None
+    # Filter: only messages FROM someone other than the bot (i.e., from the user)
+    bot_address = ""
+    try:
+        from ..comm.email import _get_config_path
+        import yaml as _yaml
+        cfg_path = _get_config_path()
+        if cfg_path.exists():
+            with open(cfg_path) as _f:
+                _cfg = _yaml.safe_load(_f)
+            bot_address = _cfg.get("sender", {}).get("address", "").lower()
+    except Exception:
+        pass
 
-    for reply in replies:
-        if our_message_id and reply.get("in_reply_to") == our_message_id:
-            print(f"  [phase1] Found threaded reply for {project_id}", file=sys.stderr)
-            return reply["body"], reply.get("attachments", [])
+    user_messages = []
+    for msg in messages:
+        from_addr = msg.get("from", "").lower()
+        if bot_address and bot_address in from_addr:
+            continue  # skip our own sent emails
+        user_messages.append(msg)
 
-    # Fallback: any reply with project_id in subject
-    for reply in replies:
-        if project_id.lower().replace("_", " ") in reply.get("subject", "").lower():
-            print(f"  [phase1] Found subject-matched reply for {project_id}", file=sys.stderr)
-            return reply["body"], reply.get("attachments", [])
+    if not user_messages:
+        return None, []
 
-    return None, []
+    # Return the most recent user message (last in list = most recent)
+    latest = user_messages[-1]
+    print(f"  [phase1] Found user message for {project_id}: {latest.get('subject', '')[:60]}", file=sys.stderr)
+    return latest["body"], latest.get("attachments", [])
 
 
 def _promote_speculative(
