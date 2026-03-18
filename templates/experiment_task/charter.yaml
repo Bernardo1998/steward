@@ -1,0 +1,36 @@
+# Experiment Runner — Charter Template
+#
+# Copy this folder to your instance: tasks/<experiment_id>/
+# Edit the fields below, then register in tasks/registry.yaml.
+
+task_id: "my_experiment"
+name: "My Experiment"
+
+# ─── ORCHESTRATOR SECTION ───
+schedule:
+  frequency: "hourly"            # "hourly" for active experiments, "daily" for slow ones
+  max_runtime_minutes: 180       # allow long sessions; lock protects against double-spawn
+
+execution:
+  agent: "codex"
+  sandbox: "none"                # "none" if experiment needs network/email access
+
+constraints:
+  file_exists:
+    - "email_config.yaml"        # remove if no email needed
+    # - "/path/to/experiment/workspace/"  # add workspace path
+
+# ─── SUB-AGENT SECTION ───
+context:
+  description: >
+    You are a research experiment runner. Your goal is described in task.md.
+    Read charter.yaml for your role. Read task.md for step-by-step instructions.
+    Execute one cycle of the workflow, then exit.
+  instructions_file: "task.md"
+
+report:
+  digest: true
+  own_email:
+    enabled: true
+    prefix: "[MY-EXP]"          # change to your experiment prefix
+    on: "always"

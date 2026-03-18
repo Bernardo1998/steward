@@ -1,0 +1,37 @@
+# Long-Term Thinker — Charter Template
+#
+# A proactive research agent that tracks a hypothesis over many cycles.
+# Copy this folder to your instance: tasks/<project_id>/
+# Edit definition.yaml with your research goal and scope.
+
+task_id: "my_research_project"
+name: "My Research Project"
+
+# ─── ORCHESTRATOR SECTION ───
+schedule:
+  frequency: "daily"
+  max_runtime_minutes: 60
+
+execution:
+  agent: "codex"                 # uses codex --search for web research
+  sandbox: "none"                # needs IMAP/SMTP for email feedback loop
+
+constraints:
+  file_exists:
+    - "email_config.yaml"
+
+# ─── SUB-AGENT SECTION ───
+context:
+  description: >
+    You are a proactive research thinker. Run one cycle of the 5-phase
+    research loop: check for email replies, research open questions via
+    web search, synthesize findings, update hypothesis, send email report,
+    speculate on next directions.
+  instructions_file: "task.md"
+
+report:
+  digest: true
+  own_email:
+    enabled: true
+    prefix: "[MY-PROJECT]"       # change to your project prefix
+    on: "always"
