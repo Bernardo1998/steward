@@ -230,8 +230,24 @@ def spawn_agent(task: dict, charter: dict, date_str: str) -> subprocess.Popen:
 
     if agent == "codex":
         sandbox_mode = execution.get("sandbox", "full-auto")
-        if sandbox_mode == "none":
-            # Full access — for tasks needing IMAP/SMTP/network
+        auto_resume = execution.get("auto_resume", False)
+        max_resume_iterations = execution.get("max_resume_iterations", 5)
+
+        if auto_resume:
+            # Use agent_loop.sh for auto-resume on context exhaustion
+            agent_loop = Path(__file__).resolve().parent / "agent_loop.sh"
+            state_file = working_dir / "state" / "experiment_state.json"
+            cmd = [
+                str(agent_loop),
+                str(working_dir),
+                str(REPO_ROOT),
+                str(prompt_file),
+                str(log_file),
+                str(state_file),
+                str(max_resume_iterations),
+                sandbox_mode,
+            ]
+        elif sandbox_mode == "none":
             cmd = [
                 "codex", "exec",
                 "--dangerously-bypass-approvals-and-sandbox",
@@ -240,7 +256,6 @@ def spawn_agent(task: dict, charter: dict, date_str: str) -> subprocess.Popen:
                 "-",  # read prompt from stdin
             ]
         else:
-            # Sandboxed — workspace-write via --full-auto
             cmd = [
                 "codex", "exec", "--full-auto",
                 "-C", str(working_dir),
@@ -256,12 +271,14 @@ def spawn_agent(task: dict, charter: dict, date_str: str) -> subprocess.Popen:
         print(f"  [orch] Unknown agent '{agent}' for {task_id}, skipping", file=sys.stderr)
         return None
 
-    print(f"  [orch] Spawning {agent} for {task_id} in {working_dir}", file=sys.stderr)
+    auto_resume = agent == "codex" and execution.get("auto_resume", False)
+    print(f"  [orch] Spawning {agent} for {task_id} in {working_dir}"
+          f"{' (auto-resume)' if auto_resume else ''}", file=sys.stderr)
 
     # Open log file for output
     log_fh = open(log_file, "a")
 
-    if agent == "codex":
+    if agent == "codex" and not auto_resume:
         # Pipe prompt via stdin from file
         prompt_fh = open(prompt_file, "r")
         proc = subprocess.Popen(
