@@ -166,8 +166,8 @@ Respond with ONLY a JSON block fenced with ```json ... ``` containing:
   "human_input_questions": []
 }}"""
 
-    # Longer timeout for prompts with bilingual/Chinese instructions
-    timeout = 300 if definition.get("output_language") else 180
+    # Allow definition-level override, otherwise longer for bilingual prompts
+    timeout = definition.get("synthesis_timeout") or (300 if definition.get("output_language") else 180)
     return call_llm_json(prompt, timeout=timeout)
 
 
