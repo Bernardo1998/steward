@@ -569,8 +569,10 @@ def collect_and_send_digest(date_str: str, state: dict):
             body_markdown=digest_md,
         )
         print(f"  [orch] Digest email: {result.get('status', 'unknown')}", file=sys.stderr)
+        return result
     except Exception as e:
         print(f"  [orch] Digest email failed: {e}", file=sys.stderr)
+        return {"status": "error", "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -691,7 +693,12 @@ def main():
     # Daily digest (first cycle of the day)
     if state.get("last_digest_date") != date_str:
         print(f"\n[orch] Sending daily digest for {date_str}...", file=sys.stderr)
-        collect_and_send_digest(date_str, state)
+        result = collect_and_send_digest(date_str, state)
+        # Retry once after cooldown if rate-limited (a task email may have just sent)
+        if isinstance(result, dict) and result.get("status") == "rate_limited":
+            print(f"  [orch] Digest rate-limited, retrying after 35s...", file=sys.stderr)
+            time.sleep(35)
+            result = collect_and_send_digest(date_str, state)
         state["last_digest_date"] = date_str
         state["last_digest_time"] = now.isoformat()
 
