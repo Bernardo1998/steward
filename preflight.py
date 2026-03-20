@@ -29,7 +29,9 @@ def check_constraints(charter: dict, instance_root: Path) -> list[str]:
 
     # Auto-infer: check that the declared agent is available
     agent = charter.get("execution", {}).get("agent", "codex")
-    if not shutil.which(agent):
+    if agent == "direct":
+        pass  # direct mode runs entrypoint via bash, no binary to check
+    elif not shutil.which(agent):
         failures.append(f"agent '{agent}' not found on PATH")
 
     # Explicit constraints section
