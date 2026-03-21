@@ -61,14 +61,35 @@ while [ $ITERATION -lt $MAX_ITERATIONS ]; do
         STATUS=$(python3 -c "import json; print(json.load(open('$STATE_FILE')).get('status',''))" 2>/dev/null)
         PENDING=$(python3 -c "import json; print(len(json.load(open('$STATE_FILE')).get('pending_steps',[])))" 2>/dev/null)
 
-        if [ "$STATUS" = "awaiting_feedback" ] || [ "$STATUS" = "done" ] || [ "$STATUS" = "validating" ]; then
-            echo "[agent_loop] Stopping: status=$STATUS" >> "$LOG_FILE"
+        # Hard stops: done, or initial plan phase awaiting feedback
+        if [ "$STATUS" = "done" ]; then
+            echo "[agent_loop] Stopping: status=done" >> "$LOG_FILE"
             break
         fi
 
-        if [ "$PENDING" = "0" ]; then
-            echo "[agent_loop] Stopping: no pending steps" >> "$LOG_FILE"
+        if [ "$STATUS" = "needs_plan" ]; then
+            echo "[agent_loop] Stopping: status=needs_plan (first run not started)" >> "$LOG_FILE"
             break
+        fi
+
+        # awaiting_feedback only stops during initial plan approval phase
+        # (before any implementing has happened). Once the agent has been
+        # implementing, it should never set awaiting_feedback again.
+        if [ "$STATUS" = "awaiting_feedback" ]; then
+            COMPLETED=$(python3 -c "import json; print(len(json.load(open('$STATE_FILE')).get('completed_steps',[])))" 2>/dev/null)
+            if [ "$COMPLETED" = "0" ]; then
+                echo "[agent_loop] Stopping: awaiting_feedback (initial plan phase)" >> "$LOG_FILE"
+                break
+            else
+                echo "[agent_loop] WARNING: awaiting_feedback set post-plan-phase (completed=$COMPLETED). Overriding to continue." >> "$LOG_FILE"
+                # Don't break — resume the agent so it keeps working
+            fi
+        fi
+
+        # Don't stop on empty pending_steps — the agent should generate new steps
+        # Only stop if pending=0 AND status=done (handled above)
+        if [ "$PENDING" = "0" ] && [ "$STATUS" = "implementing" ]; then
+            echo "[agent_loop] pending_steps empty but status=implementing — resuming so agent can generate new steps" >> "$LOG_FILE"
         fi
 
         echo "[agent_loop] Status=$STATUS, pending=$PENDING — will resume" >> "$LOG_FILE"

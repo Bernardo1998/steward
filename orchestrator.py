@@ -127,6 +127,48 @@ def is_due(schedule: dict, now: datetime, last_run_str: str) -> bool:
     return False
 
 
+def _needs_retry(task_id: str, task_path: str, schedule: dict, state: dict,
+                 date_str: str) -> bool:
+    """Check if a daily task needs retry (attempted today, no summary, retries left)."""
+    if schedule.get("frequency", "daily") != "daily":
+        return False
+
+    task_state = state.get("task_runs", {}).get(task_id, {})
+
+    # Only retry if attempted today
+    if task_state.get("last_date") != date_str:
+        return False
+
+    # Already succeeded today?
+    if task_state.get("last_success_date") == date_str:
+        return False
+
+    # Check if summary.json exists with non-failed status
+    summary_json = SUMMARIES_ROOT / date_str / "tasks" / task_id / "summary.json"
+    if summary_json.exists():
+        try:
+            with open(summary_json) as f:
+                data = json.load(f)
+            if data.get("status") != "failed":
+                return False
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Check retry count (reset on day change)
+    max_retries = schedule.get("max_retries", 2)
+    retry_count = task_state.get("retry_count", 0)
+    if task_state.get("last_retry_date") != date_str:
+        retry_count = 0
+    if retry_count >= max_retries:
+        return False
+
+    # Don't retry if locked (still running)
+    if is_locked(task_path):
+        return False
+
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Lock files
 # ---------------------------------------------------------------------------
@@ -260,7 +302,7 @@ def _send_failure_report(task_id: str, task_path: str, charter: dict,
             json.dump(fallback_json, fj, indent=2)
 
 
-def _check_unreported_tasks(tasks: list[dict], date_str: str):
+def _check_unreported_tasks(tasks: list[dict], date_str: str, state: dict):
     """Pre-pass: detect timed-out/crashed tasks and send failure emails.
 
     Runs at the start of each orchestrator cycle. For each locked task:
@@ -345,14 +387,22 @@ def _check_unreported_tasks(tasks: list[dict], date_str: str):
         if completed_normally:
             print(f"  [orch] {task_id}: completed normally (summary exists), cleaning lock",
                   file=sys.stderr)
+            # Record success date
+            state.setdefault("task_runs", {}).setdefault(task_id, {})["last_success_date"] = lock_date
         else:
-            # Send failure report if this task expects email
+            # Send failure report if this task expects email (dedup: once per day)
             charter = load_charter(task_path)
             email_enabled = (charter.get("report", {})
                                   .get("own_email", {})
                                   .get("enabled", False))
             if email_enabled:
-                _send_failure_report(task_id, task_path, charter, lock_date, reason)
+                failure_emails = state.setdefault("failure_emails_sent", {})
+                if failure_emails.get(task_id) == lock_date:
+                    print(f"  [orch] {task_id}: failure email already sent today, skipping",
+                          file=sys.stderr)
+                else:
+                    _send_failure_report(task_id, task_path, charter, lock_date, reason)
+                    failure_emails[task_id] = lock_date
 
         # Clean up lock
         print(f"  [orch] Cleaning up lock: {task_path}", file=sys.stderr)
@@ -521,6 +571,55 @@ def _collect_summaries(date_str: str, since_time: str | None = None) -> list[dic
     return summaries
 
 
+def _completeness_check(tasks: list[dict], state: dict, date_str: str,
+                        check_hour: int = 5) -> list[dict]:
+    """At check_hour, find daily tasks missing summary.json that are still retry-eligible."""
+    now = datetime.now()
+    if now.hour != check_hour:
+        return []
+
+    missing = []
+    for task in tasks:
+        task_id = task["id"]
+        task_path = task["path"]
+        charter = load_charter(task_path)
+        schedule = charter.get("schedule", {})
+
+        if schedule.get("frequency", "daily") != "daily":
+            continue
+
+        # Already succeeded today?
+        task_state = state.get("task_runs", {}).get(task_id, {})
+        if task_state.get("last_success_date") == date_str:
+            continue
+
+        # Check if summary.json exists with non-failed status
+        summary_json = SUMMARIES_ROOT / date_str / "tasks" / task_id / "summary.json"
+        if summary_json.exists():
+            try:
+                with open(summary_json) as f:
+                    data = json.load(f)
+                if data.get("status") != "failed":
+                    continue
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Check retry eligibility
+        max_retries = schedule.get("max_retries", 2)
+        retry_count = task_state.get("retry_count", 0)
+        if task_state.get("last_retry_date") != date_str:
+            retry_count = 0
+        if retry_count >= max_retries:
+            continue
+
+        if is_locked(task_path):
+            continue
+
+        missing.append(task)
+
+    return missing
+
+
 def collect_and_send_digest(date_str: str, state: dict):
     """Collect task summaries and send daily digest email.
 
@@ -604,7 +703,7 @@ def main():
         return
 
     # Pre-pass: check for unreported failures from previous cycles
-    _check_unreported_tasks(tasks, date_str)
+    _check_unreported_tasks(tasks, date_str, state)
 
     # Determine what's due
     spawned = []
@@ -673,8 +772,14 @@ def main():
                 if exit_code != 0:
                     email_cfg = t["charter"].get("report", {}).get("own_email", {})
                     if email_cfg.get("enabled"):
-                        _send_failure_report(task_id, t["path"], t["charter"],
-                                             date_str, f"FAILED (exit code {exit_code})")
+                        failure_emails = state.setdefault("failure_emails_sent", {})
+                        if failure_emails.get(task_id) == date_str:
+                            print(f"  [orch] {task_id}: failure email already sent today, skipping",
+                                  file=sys.stderr)
+                        else:
+                            _send_failure_report(task_id, t["path"], t["charter"],
+                                                 date_str, f"FAILED (exit code {exit_code})")
+                            failure_emails[task_id] = date_str
             except subprocess.TimeoutExpired:
                 print(f"  [orch] {task_id} still running after {max_rt} min, leaving async", file=sys.stderr)
         else:
@@ -689,24 +794,156 @@ def main():
         # Remove lock if process finished
         if t["proc"].poll() is not None:
             remove_lock(t["path"])
+            # Check for successful completion (summary.json with non-failed status)
+            summary_json = SUMMARIES_ROOT / date_str / "tasks" / task_id / "summary.json"
+            if summary_json.exists():
+                try:
+                    with open(summary_json) as f:
+                        data = json.load(f)
+                    if data.get("status") != "failed":
+                        state["task_runs"][task_id]["last_success_date"] = date_str
+                except (json.JSONDecodeError, OSError):
+                    pass
 
-    # Daily digest (first cycle of the day)
-    if state.get("last_digest_date") != date_str:
+    # -----------------------------------------------------------------------
+    # Retry pass: re-spawn crashed daily tasks (max 2 retries per day)
+    # -----------------------------------------------------------------------
+    retry_spawned = []
+    spawned_ids = {t["id"] for t in spawned}
+    for task in tasks:
+        task_id = task["id"]
+        task_path = task["path"]
+        if task_id in spawned_ids:
+            continue  # Already spawned this cycle
+
+        charter = load_charter(task_path)
+        schedule = charter.get("schedule", {})
+
+        if _needs_retry(task_id, task_path, schedule, state, date_str):
+            # Preflight check before retry
+            failures = check_preflight(task_id, charter)
+            if failures:
+                print(f"  [orch] {task_id}: retry preflight FAILED, skipping", file=sys.stderr)
+                continue
+
+            task_state = state.setdefault("task_runs", {}).setdefault(task_id, {})
+            retry_count = task_state.get("retry_count", 0)
+            if task_state.get("last_retry_date") != date_str:
+                retry_count = 0
+            retry_count += 1
+            task_state["retry_count"] = retry_count
+            task_state["last_retry_date"] = date_str
+
+            print(f"  [orch] {task_id}: RETRY #{retry_count} (no summary for {date_str})",
+                  file=sys.stderr)
+            proc = spawn_agent(task, charter, date_str)
+            if proc:
+                retry_spawned.append({"id": task_id, "path": task_path,
+                                      "proc": proc, "charter": charter})
+
+    if retry_spawned:
+        print(f"  [orch] Retrying {len(retry_spawned)} task(s): "
+              f"{[t['id'] for t in retry_spawned]}", file=sys.stderr)
+
+    # -----------------------------------------------------------------------
+    # Completeness check (at configured hour): spawn any missing daily tasks
+    # -----------------------------------------------------------------------
+    completeness_tasks = _completeness_check(tasks, state, date_str)
+    completeness_spawned = []
+    already_handled = spawned_ids | {t["id"] for t in retry_spawned}
+    for task in completeness_tasks:
+        task_id = task["id"]
+        if task_id in already_handled:
+            continue
+
+        task_path = task["path"]
+        charter = load_charter(task_path)
+
+        failures = check_preflight(task_id, charter)
+        if failures:
+            print(f"  [orch] {task_id}: completeness-check preflight FAILED", file=sys.stderr)
+            continue
+
+        task_state = state.setdefault("task_runs", {}).setdefault(task_id, {})
+        retry_count = task_state.get("retry_count", 0)
+        if task_state.get("last_retry_date") != date_str:
+            retry_count = 0
+        retry_count += 1
+        task_state["retry_count"] = retry_count
+        task_state["last_retry_date"] = date_str
+
+        print(f"  [orch] {task_id}: COMPLETENESS spawn (missing summary for {date_str})",
+              file=sys.stderr)
+        proc = spawn_agent(task, charter, date_str)
+        if proc:
+            completeness_spawned.append({"id": task_id, "path": task_path,
+                                         "proc": proc, "charter": charter})
+
+    if completeness_spawned:
+        print(f"  [orch] Completeness check spawned {len(completeness_spawned)} task(s): "
+              f"{[t['id'] for t in completeness_spawned]}", file=sys.stderr)
+
+    # -----------------------------------------------------------------------
+    # Daily digest with guaranteed delivery
+    # -----------------------------------------------------------------------
+    # Send digest at DIGEST_HOUR (default 7 AM) so short tasks have time to
+    # complete. Include whatever summaries exist — don't wait for long tasks.
+    DIGEST_HOUR = 7
+    digest_pending = state.get("digest_pending", False)
+    digest_file_written = state.get("last_digest_date") == date_str
+
+    if not digest_file_written and now.hour >= DIGEST_HOUR:
+        # Digest hour reached: collect completed task summaries and send
         print(f"\n[orch] Sending daily digest for {date_str}...", file=sys.stderr)
         result = collect_and_send_digest(date_str, state)
-        # Retry once after cooldown if rate-limited (a task email may have just sent)
+        state["last_digest_date"] = date_str
+        state["last_digest_time"] = now.isoformat()
+
+        # Retry once after cooldown if rate-limited
+        email_failed = isinstance(result, dict) and result.get("status") in ("rate_limited", "error")
         if isinstance(result, dict) and result.get("status") == "rate_limited":
             print(f"  [orch] Digest rate-limited, retrying after 35s...", file=sys.stderr)
             time.sleep(35)
             result = collect_and_send_digest(date_str, state)
-        state["last_digest_date"] = date_str
-        state["last_digest_time"] = now.isoformat()
+            email_failed = isinstance(result, dict) and result.get("status") in ("rate_limited", "error")
+
+        if email_failed:
+            state["digest_pending"] = True
+            state["digest_retry_count"] = 1
+            print(f"  [orch] Digest email failed, will retry next cycle", file=sys.stderr)
+        else:
+            state["digest_pending"] = False
+            state["digest_retry_count"] = 0
+    elif not digest_file_written:
+        print(f"  [orch] Digest deferred until {DIGEST_HOUR}:00 (now {now.hour}:00)",
+              file=sys.stderr)
+    elif digest_pending:
+        # Retry pending digest email on later cycles
+        digest_retry_count = state.get("digest_retry_count", 0)
+        if digest_retry_count < 10:
+            print(f"\n[orch] Retrying digest email (attempt {digest_retry_count + 1}/10)...",
+                  file=sys.stderr)
+            result = collect_and_send_digest(date_str, state)
+            if isinstance(result, dict) and result.get("status") in ("rate_limited", "error"):
+                state["digest_retry_count"] = digest_retry_count + 1
+                print(f"  [orch] Digest email still failing, will retry next cycle",
+                      file=sys.stderr)
+            else:
+                state["digest_pending"] = False
+                state["digest_retry_count"] = 0
+                print(f"  [orch] Digest email delivered on retry", file=sys.stderr)
+        else:
+            print(f"  [orch] Digest email: max retries (10) reached, giving up", file=sys.stderr)
+            state["digest_pending"] = False
 
     save_state(state)
 
     # Status report
+    all_spawned = ([t["id"] for t in spawned]
+                   + [f"{t['id']}(retry)" for t in retry_spawned]
+                   + [f"{t['id']}(completeness)" for t in completeness_spawned])
     print(f"\n[orch] Cycle complete.", file=sys.stderr)
-    print(f"  Spawned: {[t['id'] for t in spawned]}", file=sys.stderr)
+    print(f"  Spawned: {all_spawned}", file=sys.stderr)
     print(f"  Skipped: {skipped}", file=sys.stderr)
 
 

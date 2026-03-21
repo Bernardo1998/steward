@@ -168,7 +168,7 @@ def research(
                     query,
                     context=definition.get("goal", ""),
                     output_dir=output_dir,
-                    max_workers=3,
+                    max_workers=2,
                     worker_timeout=480,
                     planner_timeout=180,
                     aggregator_timeout=300,
