@@ -33,6 +33,34 @@ Charter-worker is the **engine** — it orchestrates tasks, manages schedules an
 
 ---
 
+## Why charter-worker?
+
+Most AI research tools assume a fixed pipeline: search → plan → experiment → write.
+Charter-worker takes a different approach, informed by **organizational theory**
+(Coase, Simon, Galbraith) — the same body of work that explains when firms should
+outsource vs. keep in-house, applied to when AI agents should decompose work vs.
+keep it centralized.
+
+**Key differences from tools like autoresearch, FARS, and ARIS:**
+
+- **No hard split between search and act.** The agent dynamically chooses between
+  literature search, experiment execution, and human escalation based on current state
+  — not a rigid pipeline.
+- **Problem-finding, not just problem-solving.** The proactive research cycle iterates
+  on the research *question itself* through novelty/impact/feasibility tests before
+  running expensive experiments.
+- **Long-horizon coherence.** 10 guardrails (deduplication, relevance, provenance,
+  novelty, stagnation detection, structural consistency) prevent drift across weeks
+  of autonomous operation.
+- **Self-healing orchestrator.** When tasks crash, a diagnostic agent reads the logs,
+  identifies root causes, applies fixes, and retries automatically.
+- **General-purpose.** Not just research — the same charter system orchestrates health
+  tracking, job search, weekly planning, and any recurring task you define.
+
+See [docs/theory.md](docs/theory.md) for the full organizational theory motivation.
+
+---
+
 ## Features
 
 - **Schedule-based orchestration** — hourly, daily, or weekly tasks, each with lock files to prevent double-spawning
@@ -60,6 +88,10 @@ This installs the `charter-orchestrator` CLI command.
 ---
 
 ## Quick Start
+
+> **Using an AI agent?** Point it at [`docs/agent-setup.md`](docs/agent-setup.md) —
+> it contains step-by-step instructions your agent can follow to bootstrap a working
+> instance with zero manual setup.
 
 ### 1. Create an instance directory
 

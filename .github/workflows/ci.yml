@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package
+        run: pip install -e .
+
+      - name: Import check
+        run: |
+          python -c "import charter_worker"
+          python -c "from charter_worker.proactive.guardrails import g8_structural_check"
+          python -c "from charter_worker.research.engine import run_research"
+
+      - name: Run hello_world example
+        run: |
+          cd templates/hello_world
+          python run.py
+          # Verify outputs were created
+          test -f ../../daily_summaries/*/tasks/hello_world/summary.json
+          test -f ../../daily_summaries/*/tasks/hello_world/summary.md

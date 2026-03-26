@@ -308,6 +308,43 @@ def g7_stagnation_check(metrics_history: list[dict]) -> GuardrailResult:
 
 
 # ---------------------------------------------------------------------------
+# G8 — Structural Consistency (programmatic)
+# ---------------------------------------------------------------------------
+
+_REQUIRED_STATUS_FIELDS = {
+    "cycle_number", "confidence_score", "current_hypothesis",
+    "key_findings", "open_questions", "action_suggestions",
+}
+
+
+def g8_structural_check(status: dict) -> GuardrailResult:
+    """Verify status.yaml contains all required fields with valid types."""
+    missing = _REQUIRED_STATUS_FIELDS - set(status.keys())
+    if missing:
+        return GuardrailResult(
+            "G8", False,
+            f"Status missing required fields: {', '.join(sorted(missing))}",
+            "needs_fix",
+        )
+
+    issues = []
+    if not isinstance(status.get("key_findings"), list):
+        issues.append("key_findings is not a list")
+    if not isinstance(status.get("open_questions"), list):
+        issues.append("open_questions is not a list")
+    if not isinstance(status.get("action_suggestions"), list):
+        issues.append("action_suggestions is not a list")
+
+    conf = status.get("confidence_score")
+    if conf is not None and not (1 <= conf <= 5):
+        issues.append(f"confidence_score={conf} out of range [1,5]")
+
+    if issues:
+        return GuardrailResult("G8", False, "; ".join(issues), "needs_fix")
+    return GuardrailResult("G8", True, "Status structure valid", "passed")
+
+
+# ---------------------------------------------------------------------------
 # G9 — Speculative Isolation (programmatic)
 # ---------------------------------------------------------------------------
 

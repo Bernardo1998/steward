@@ -1,0 +1,31 @@
+# Experiment Definition — describes the experiment's immutable goal
+#
+# This file is the "constitution" of the experiment. The agent reads it
+# every cycle to stay aligned with the research question.
+
+project_id: "my_experiment"
+created_at: "2026-01-01T00:00:00Z"
+
+goal: >
+  [Describe the experiment's research question in 2-4 sentences. What hypothesis
+  are you testing? What does "done" look like?]
+
+scope_boundaries:
+  in_scope:
+    - "[Variable or condition to test]"
+    - "[Dataset or benchmark to use]"
+    - "[Analysis to produce]"
+  out_of_scope:
+    - "[Things the experiment should NOT explore]"
+    - "[Adjacent experiments to defer]"
+
+success_criteria:
+  - "[Concrete result 1 — e.g., accuracy table for all conditions]"
+  - "[Concrete result 2 — e.g., cost breakdown per architecture]"
+  - "[Concrete result 3 — e.g., decision tree predicting best configuration]"
+
+# Experiment-specific settings
+experiment_config:
+  budget_hard_limit_usd: 100       # Total API spend ceiling
+  # model: "gpt-4o"               # Model for experiment runs
+  # max_steps_per_cycle: 2        # Experiment steps per orchestrator cycle
