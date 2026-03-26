@@ -19,7 +19,7 @@ def speculate(
     context: dict,
     project_dir: Path,
     max_directions: int = 2,
-    timeout_per_direction: int = 90,
+    timeout_per_direction: int = 300,
     total_budget_seconds: Optional[float] = None,
     elapsed_seconds: float = 0,
 ) -> tuple[dict, list[GuardrailResult]]:

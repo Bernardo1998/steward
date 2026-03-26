@@ -155,7 +155,7 @@ def _needs_retry(task_id: str, task_path: str, schedule: dict, state: dict,
             pass
 
     # Check retry count (reset on day change)
-    max_retries = schedule.get("max_retries", 2)
+    max_retries = schedule.get("max_retries", 3)
     retry_count = task_state.get("retry_count", 0)
     if task_state.get("last_retry_date") != date_str:
         retry_count = 0
@@ -232,11 +232,165 @@ def check_preflight(task_id: str, charter: dict) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Self-healing: diagnose & fix crashed tasks
+# ---------------------------------------------------------------------------
+
+_DIAGNOSE_TIMEOUT = 600  # 10 minutes max for diagnosis agent
+
+def _diagnose_and_fix(task_id: str, task_path: str, reason: str,
+                      date_str: str, state: dict) -> dict:
+    """Spawn a Claude Code agent to diagnose and fix a crashed task.
+
+    Returns dict with:
+        diagnosed: bool — whether diagnosis ran
+        diagnosis: str — root cause explanation
+        fix_applied: bool — whether a code/config fix was made
+        fix_description: str — what was changed
+        should_retry: bool — whether retry is likely to succeed
+    """
+    result = {
+        "diagnosed": False, "diagnosis": "", "fix_applied": False,
+        "fix_description": "", "should_retry": False,
+    }
+
+    # Don't diagnose the same task twice in one day
+    diag_state = state.setdefault("diagnoses", {})
+    if diag_state.get(task_id, {}).get("date") == date_str:
+        prev = diag_state[task_id]
+        print(f"  [orch] {task_id}: already diagnosed today, reusing result",
+              file=sys.stderr)
+        return prev.get("result", result)
+
+    # Gather crash context
+    log_file = REPO_ROOT / task_path / "logs" / f"cycle_{date_str}.log"
+    log_text = ""
+    if log_file.exists():
+        raw = log_file.read_text()
+        log_text = raw[-4000:] if len(raw) > 4000 else raw
+
+    task_dir = REPO_ROOT / task_path
+    charter_file = task_dir / "charter.yaml"
+    charter_text = charter_file.read_text() if charter_file.exists() else "(no charter.yaml)"
+
+    # Check for run.py or task.md as the entry point
+    run_py = task_dir / "run.py"
+    entry_text = ""
+    if run_py.exists():
+        raw = run_py.read_text()
+        entry_text = raw[:6000] if len(raw) > 6000 else raw
+
+    # Build the diagnostic prompt
+    prompt = f"""\
+You are a self-healing orchestrator agent. A task has crashed and you must diagnose
+the root cause and fix it so the next retry succeeds.
+
+TASK: {task_id}
+PATH: {task_path}
+DATE: {date_str}
+FAILURE REASON: {reason}
+
+CHARTER CONFIG:
+```yaml
+{charter_text[:2000]}
+```
+
+CRASH LOG (last 4000 chars):
+```
+{log_text if log_text else "(empty — process produced no output before crash)"}
+```
+
+ENTRY POINT (run.py, first 6000 chars):
+```python
+{entry_text if entry_text else "(no run.py found)"}
+```
+
+YOUR JOB:
+1. Read the crash log and task code to understand WHY the task failed.
+2. If the fix requires a code or config change, MAKE THE CHANGE directly.
+   - You have write access to files under {task_dir}
+   - You can also read/edit files in the charter-worker library at /mnt/c/charter-worker/
+3. If the failure is environmental (network, disk, etc.), note it but don't retry blindly.
+4. If the log is empty, check for common issues: import errors, missing dependencies,
+   stale state files, wrong file paths.
+
+After investigating, output EXACTLY one JSON block (fenced with ```json ... ```) with:
+```json
+{{
+  "diagnosis": "One-paragraph root cause explanation",
+  "fix_applied": true/false,
+  "fix_description": "What you changed (or 'no fix needed' / 'manual intervention required')",
+  "should_retry": true/false,
+  "confidence": "high/medium/low"
+}}
+```
+
+Be concise. Focus on fixing, not explaining."""
+
+    print(f"  [orch] {task_id}: spawning diagnostic agent...", file=sys.stderr)
+    try:
+        proc = subprocess.run(
+            ["codex", "exec",
+             "--dangerously-bypass-approvals-and-sandbox",
+             "-C", str(task_dir),
+             "--add-dir", str(REPO_ROOT),
+             "-"],
+            input=prompt,
+            capture_output=True, text=True,
+            timeout=_DIAGNOSE_TIMEOUT,
+            cwd=str(task_dir),
+        )
+        output = proc.stdout or ""
+
+        # Extract JSON result from output
+        import re
+        json_match = re.search(r"```json\s*\n(.*?)\n\s*```", output, re.DOTALL)
+        if not json_match:
+            # Try without fences
+            json_match = re.search(r'\{[^{}]*"diagnosis"[^{}]*\}', output)
+        if json_match:
+            raw = json_match.group(1) if "```" in json_match.group(0) else json_match.group(0)
+            parsed = json.loads(raw)
+            result = {
+                "diagnosed": True,
+                "diagnosis": parsed.get("diagnosis", ""),
+                "fix_applied": parsed.get("fix_applied", False),
+                "fix_description": parsed.get("fix_description", ""),
+                "should_retry": parsed.get("should_retry", True),
+            }
+        else:
+            # Agent didn't produce structured output — use raw text as diagnosis
+            result["diagnosed"] = True
+            result["diagnosis"] = output[-1500:] if output else "Agent produced no output"
+            result["should_retry"] = True  # default to retry
+
+        print(f"  [orch] {task_id}: diagnosis complete — "
+              f"fix={'YES' if result['fix_applied'] else 'no'}, "
+              f"retry={'YES' if result['should_retry'] else 'no'}",
+              file=sys.stderr)
+        print(f"  [orch] {task_id}: {result['diagnosis'][:200]}",
+              file=sys.stderr)
+
+    except subprocess.TimeoutExpired:
+        result["diagnosed"] = True
+        result["diagnosis"] = f"Diagnostic agent timed out after {_DIAGNOSE_TIMEOUT}s"
+        result["should_retry"] = True  # try anyway
+        print(f"  [orch] {task_id}: diagnostic agent timed out", file=sys.stderr)
+    except Exception as e:
+        result["diagnosis"] = f"Diagnostic agent failed to start: {e}"
+        print(f"  [orch] {task_id}: diagnostic agent error: {e}", file=sys.stderr)
+
+    # Cache diagnosis for today (don't diagnose same task twice)
+    diag_state[task_id] = {"date": date_str, "result": result}
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Failure reporting
 # ---------------------------------------------------------------------------
 
 def _send_failure_report(task_id: str, task_path: str, charter: dict,
-                         date_str: str, reason: str):
+                         date_str: str, reason: str,
+                         diagnosis: dict | None = None):
     """Send an email + write fallback summary when a task fails without self-reporting."""
     report_cfg = charter.get("report", {})
     email_cfg = report_cfg.get("own_email", {})
@@ -251,6 +405,18 @@ def _send_failure_report(task_id: str, task_path: str, charter: dict,
         f"**Date:** {date_str}",
         f"**Reason:** {reason}\n",
     ]
+
+    # Include diagnosis if available
+    if diagnosis and diagnosis.get("diagnosed"):
+        parts.append("## Diagnosis (auto-investigated)\n")
+        parts.append(f"**Root cause:** {diagnosis.get('diagnosis', 'unknown')}\n")
+        if diagnosis.get("fix_applied"):
+            parts.append(f"**Fix applied:** {diagnosis.get('fix_description', '')}\n")
+            parts.append("*The orchestrator has automatically applied a fix and will retry.*\n")
+        elif diagnosis.get("should_retry"):
+            parts.append("*No code fix needed — retrying.*\n")
+        else:
+            parts.append("*Manual intervention may be required.*\n")
 
     if summary_file.exists():
         content = summary_file.read_text()
@@ -390,7 +556,28 @@ def _check_unreported_tasks(tasks: list[dict], date_str: str, state: dict):
             # Record success date
             state.setdefault("task_runs", {}).setdefault(task_id, {})["last_success_date"] = lock_date
         else:
-            # Send failure report if this task expects email (dedup: once per day)
+            # --- Self-healing: diagnose before reporting ---
+            diagnosis = _diagnose_and_fix(task_id, task_path, reason,
+                                          lock_date, state)
+
+            # If diagnosis applied a fix, remove stale fallback summary so
+            # retry generates a fresh one
+            if diagnosis.get("fix_applied"):
+                stale_summary = SUMMARIES_ROOT / lock_date / "tasks" / task_id / "summary.json"
+                if stale_summary.exists():
+                    try:
+                        with open(stale_summary) as f:
+                            sdata = json.load(f)
+                        if sdata.get("status") == "failed":
+                            stale_summary.unlink()
+                            stale_md = stale_summary.with_suffix(".md")
+                            stale_md.unlink(missing_ok=True)
+                            print(f"  [orch] {task_id}: cleared stale fallback summary for retry",
+                                  file=sys.stderr)
+                    except (json.JSONDecodeError, OSError):
+                        pass
+
+            # Send failure report (with diagnosis) if this task expects email
             charter = load_charter(task_path)
             email_enabled = (charter.get("report", {})
                                   .get("own_email", {})
@@ -401,7 +588,8 @@ def _check_unreported_tasks(tasks: list[dict], date_str: str, state: dict):
                     print(f"  [orch] {task_id}: failure email already sent today, skipping",
                           file=sys.stderr)
                 else:
-                    _send_failure_report(task_id, task_path, charter, lock_date, reason)
+                    _send_failure_report(task_id, task_path, charter, lock_date,
+                                         reason, diagnosis=diagnosis)
                     failure_emails[task_id] = lock_date
 
         # Clean up lock
@@ -806,7 +994,8 @@ def main():
                     pass
 
     # -----------------------------------------------------------------------
-    # Retry pass: re-spawn crashed daily tasks (max 2 retries per day)
+    # Retry pass: re-spawn crashed daily tasks (max 3 retries per day)
+    # After self-healing diagnosis, only retry if diagnosis says should_retry.
     # -----------------------------------------------------------------------
     retry_spawned = []
     spawned_ids = {t["id"] for t in spawned}
@@ -820,6 +1009,13 @@ def main():
         schedule = charter.get("schedule", {})
 
         if _needs_retry(task_id, task_path, schedule, state, date_str):
+            # Check diagnosis: if we diagnosed and it says don't retry, skip
+            diag = state.get("diagnoses", {}).get(task_id, {}).get("result", {})
+            if diag.get("diagnosed") and not diag.get("should_retry"):
+                print(f"  [orch] {task_id}: diagnosis says no retry — manual fix needed",
+                      file=sys.stderr)
+                continue
+
             # Preflight check before retry
             failures = check_preflight(task_id, charter)
             if failures:
@@ -834,7 +1030,10 @@ def main():
             task_state["retry_count"] = retry_count
             task_state["last_retry_date"] = date_str
 
-            print(f"  [orch] {task_id}: RETRY #{retry_count} (no summary for {date_str})",
+            diag_note = ""
+            if diag.get("fix_applied"):
+                diag_note = f" (fix applied: {diag.get('fix_description', '')[:60]})"
+            print(f"  [orch] {task_id}: RETRY #{retry_count}{diag_note} (no summary for {date_str})",
                   file=sys.stderr)
             proc = spawn_agent(task, charter, date_str)
             if proc:
@@ -886,9 +1085,9 @@ def main():
     # -----------------------------------------------------------------------
     # Daily digest with guaranteed delivery
     # -----------------------------------------------------------------------
-    # Send digest at DIGEST_HOUR (default 7 AM) so short tasks have time to
+    # Send digest at DIGEST_HOUR (default 5 AM) so short tasks have time to
     # complete. Include whatever summaries exist — don't wait for long tasks.
-    DIGEST_HOUR = 7
+    DIGEST_HOUR = 5
     digest_pending = state.get("digest_pending", False)
     digest_file_written = state.get("last_digest_date") == date_str
 

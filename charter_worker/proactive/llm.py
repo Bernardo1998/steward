@@ -13,7 +13,7 @@ def call_llm(
     prompt: str,
     *,
     search: bool = False,
-    timeout: int = 300,
+    timeout: int = 900,
     model: Optional[str] = None,
 ) -> str:
     """Call codex exec and return raw output.

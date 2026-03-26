@@ -81,7 +81,7 @@ Respond with ONLY a JSON block fenced with ```json ... ``` containing:
         return [f"recent advances in {open_question} 2025 2026"]
 
 
-def _run_lightweight_search(query: str, timeout: int = 180) -> dict:
+def _run_lightweight_search(query: str, timeout: int = 600) -> dict:
     """Run a single lightweight search via codex --search."""
     prompt = f"""Search for recent information about: {query}
 
@@ -147,6 +147,11 @@ def research(
                     "source_question_idx": -1,
                 })
 
+    # Cap total executed queries per cycle.
+    # With bounded worker searches (~70s each), 2 queries ≈ 10 min.
+    MAX_QUERIES_PER_CYCLE = 2
+    executed_count = 0
+
     # Dedup and execute
     for q_info in queries:
         query = q_info["query"]
@@ -158,7 +163,12 @@ def research(
             print(f"  [phase2] Skipping duplicate query: {query[:60]}...", file=sys.stderr)
             continue
 
-        print(f"  [phase2] Researching: {query[:80]}...", file=sys.stderr)
+        if executed_count >= MAX_QUERIES_PER_CYCLE:
+            print(f"  [phase2] Query cap reached ({MAX_QUERIES_PER_CYCLE}), deferring remaining queries", file=sys.stderr)
+            break
+
+        print(f"  [phase2] Researching ({executed_count + 1}/{MAX_QUERIES_PER_CYCLE} max): {query[:80]}...", file=sys.stderr)
+        executed_count += 1
         timestamp = datetime.now().isoformat()
 
         if budget_tier == "full":
@@ -169,10 +179,10 @@ def research(
                     context=definition.get("goal", ""),
                     output_dir=output_dir,
                     max_workers=2,
-                    worker_timeout=480,
-                    planner_timeout=180,
-                    aggregator_timeout=300,
-                    reviewer_timeout=300,
+                    worker_timeout=900,
+                    planner_timeout=600,
+                    aggregator_timeout=600,
+                    reviewer_timeout=600,
                 )
                 # Extract findings from deep_research result
                 synthesis = result.get("synthesis", {})

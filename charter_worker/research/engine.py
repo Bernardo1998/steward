@@ -144,10 +144,12 @@ def _run_planner(
 # ---------------------------------------------------------------------------
 
 _WORKER_PROMPT = """\
-You are a research worker performing deep web research. Answer the subquestion \
-below in the context of the main research question. Use your web search capabilities \
-thoroughly — look for recent papers, blog posts, documentation, benchmarks, and \
-expert opinions.
+You are a research worker performing web research. Answer the subquestion \
+below in the context of the main research question.
+
+IMPORTANT: Do NOT perform more than 3 web searches total. After 3 searches, \
+stop searching and synthesize what you have found. Prefer targeted searches \
+over broad ones.
 
 MAIN QUESTION:
 {main_question}
@@ -501,10 +503,10 @@ def run_research(
     max_workers: int = 5,
     model: Optional[str] = None,
     search: bool = True,
-    planner_timeout: int = 120,
-    worker_timeout: int = 300,
-    aggregator_timeout: int = 300,
-    reviewer_timeout: int = 300,
+    planner_timeout: int = 600,
+    worker_timeout: int = 900,
+    aggregator_timeout: int = 600,
+    reviewer_timeout: int = 600,
 ) -> dict:
     """Run a full deep research pipeline on *question*.
 
