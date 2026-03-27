@@ -17,9 +17,11 @@ all = ["markdown>=3.4", "weasyprint>=60.0"]
 
 [project.scripts]
 charter-orchestrator = "orchestrator:main"
+charter-init = "init_cmd:main"
+charter-status = "status_cmd:main"
 
 [tool.setuptools.packages.find]
 include = ["charter_worker*"]
 
 [tool.setuptools]
-py-modules = ["orchestrator", "preflight"]
+py-modules = ["orchestrator", "preflight", "init_cmd", "status_cmd"]

@@ -22,13 +22,18 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install package
-        run: pip install -e .
+        run: pip install -e ".[all]" && pip install pytest
 
       - name: Import check
         run: |
           python -c "import charter_worker"
           python -c "from charter_worker.proactive.guardrails import g8_structural_check"
           python -c "from charter_worker.research.engine import run_research"
+          python -c "from init_cmd import init_instance, list_templates"
+          python -c "from status_cmd import collect_status, format_table"
+
+      - name: Run tests
+        run: python -m pytest tests/ -v
 
       - name: Run hello_world example
         run: |
@@ -37,3 +42,11 @@ jobs:
           # Verify outputs were created
           test -f ../../daily_summaries/*/tasks/hello_world/summary.json
           test -f ../../daily_summaries/*/tasks/hello_world/summary.md
+
+      - name: Test charter-init bootstrap
+        run: |
+          charter-init /tmp/ci-test-instance
+          test -f /tmp/ci-test-instance/tasks/registry.yaml
+          test -f /tmp/ci-test-instance/tasks/hello_world/charter.yaml
+          test -f /tmp/ci-test-instance/.gitignore
+          test -x /tmp/ci-test-instance/run.sh
