@@ -169,7 +169,7 @@ Respond with ONLY a JSON block fenced with ```json ... ``` containing:
 }}"""
 
     try:
-        result = call_llm_json(prompt, timeout=120)
+        result = call_llm_json(prompt, timeout=300)
         llm_patterns = result.get("patterns", [])
     except Exception as e:
         print(f"  [reflect] Failure analysis LLM failed: {e}", file=sys.stderr)
@@ -184,12 +184,23 @@ Respond with ONLY a JSON block fenced with ```json ... ``` containing:
             for fix in task_health.get(tid, {}).get("fix_history", []):
                 prior_fixes.append(fix.get("description", "")[:100])
 
+        # If LLM didn't enrich, infer fix_type from diagnosis history:
+        # tasks with 3+ days failing and reactive diagnoses that recur → "code"
+        inferred_fix_type = llm_p.get("fix_type", "unknown")
+        if inferred_fix_type == "unknown":
+            for tid in p["affected_tasks"]:
+                h = task_health.get(tid, {})
+                diag_count = len(h.get("diagnosis_history", []))
+                if h.get("days_failing", 0) >= 3 and diag_count >= 2:
+                    inferred_fix_type = "code"
+                    break
+
         analyzed.append({
             "pattern_id": f"persistent_{i}",
             "affected_tasks": p["affected_tasks"],
             "root_cause": llm_p.get("root_cause", p.get("sample_diagnosis", "unknown")),
             "durable_fix_suggestion": llm_p.get("durable_fix_suggestion", ""),
-            "fix_type": llm_p.get("fix_type", "unknown"),
+            "fix_type": inferred_fix_type,
             "confidence": llm_p.get("confidence", "low"),
             "prior_fixes_tried": prior_fixes,
             "prior_fixes_ineffective_because": llm_p.get("prior_fixes_ineffective_because", ""),
@@ -268,7 +279,7 @@ Respond with ONLY a JSON block fenced with ```json ... ``` containing:
 }}"""
 
     try:
-        result = call_llm_json(prompt, timeout=90)
+        result = call_llm_json(prompt, timeout=180)
         task_results = result.get("tasks", [])
     except Exception as e:
         print(f"  [reflect] Engagement analysis LLM failed: {e}", file=sys.stderr)
@@ -346,7 +357,7 @@ Respond with ONLY a JSON block fenced with ```json ... ``` containing:
 }}"""
 
     try:
-        result = call_llm_json(prompt, timeout=90)
+        result = call_llm_json(prompt, timeout=180)
         assessments = result.get("assessments", [])
     except Exception as e:
         print(f"  [reflect] Value assessment LLM failed: {e}", file=sys.stderr)
