@@ -424,6 +424,14 @@ Be concise. Focus on fixing, not explaining."""
 
     # Cache diagnosis for today (don't diagnose same task twice)
     diag_state[task_id] = {"date": date_str, "result": result}
+
+    # Persist to reflection state for multi-day pattern analysis
+    try:
+        from charter_worker.proactive.reflection.state import append_diagnosis_history
+        append_diagnosis_history(REPO_ROOT, task_id, date_str, result)
+    except ImportError:
+        pass  # reflection module not installed yet
+
     return result
 
 
@@ -882,6 +890,14 @@ def collect_and_send_digest(date_str: str, state: dict):
 
     # Build digest
     lines = [f"# Daily Digest — {date_str}", ""]
+
+    # Inject reflection health report if available
+    reflection_report = state.get("_reflection_report", "")
+    if reflection_report:
+        lines.append("---\n## System Health Report\n")
+        lines.append(reflection_report)
+        lines.append("")
+
     for s in all_summaries:
         lines.append(f"---\n## {s['task']}\n")
         lines.append(s["content"])
@@ -1131,6 +1147,29 @@ def main():
     if completeness_spawned:
         print(f"  [orch] Completeness check spawned {len(completeness_spawned)} task(s): "
               f"{[t['id'] for t in completeness_spawned]}", file=sys.stderr)
+
+    # -----------------------------------------------------------------------
+    # Daily reflection: proactive self-improvement (runs once at 4 AM)
+    # -----------------------------------------------------------------------
+    REFLECTION_HOUR = 4
+    reflection_ran = state.get("last_reflection_date") == date_str
+
+    if not reflection_ran and now.hour >= REFLECTION_HOUR:
+        print(f"\n[orch] Running daily reflection for {date_str}...", file=sys.stderr)
+        try:
+            from charter_worker.proactive.reflection.pipeline import run_reflection
+            reflection_result = run_reflection(REPO_ROOT, date_str, state)
+            state["last_reflection_date"] = date_str
+            state["last_reflection_time"] = now.isoformat()
+            state["_reflection_report"] = reflection_result.get("health_report_md", "")
+        except Exception as e:
+            print(f"  [orch] Reflection failed: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            state["_reflection_report"] = f"*Reflection failed: {e}*"
+    elif not reflection_ran:
+        print(f"  [orch] Reflection deferred until {REFLECTION_HOUR}:00 (now {now.hour}:00)",
+              file=sys.stderr)
 
     # -----------------------------------------------------------------------
     # Daily digest with guaranteed delivery
