@@ -91,8 +91,6 @@ def _load_context_files(project_dir: Path) -> str:
                 # File too large — read first + last portions, cache summary
                 with open(file_path, encoding="utf-8", errors="replace") as f:
                     head = f.read(_MAX_FILE_SIZE // 2)
-                f.seek(max(0, file_size - _MAX_FILE_SIZE // 4))
-                with open(file_path, encoding="utf-8", errors="replace") as f:
                     f.seek(max(0, file_size - _MAX_FILE_SIZE // 4))
                     tail = f.read(_MAX_FILE_SIZE // 4)
                 content = f"{head}\n\n[... {file_size - _MAX_FILE_SIZE * 3 // 4} bytes omitted ...]\n\n{tail}"
@@ -220,6 +218,9 @@ def load_context(
         stagnation_result, guardrail_results
     """
     guardrail_results = []
+    context_root = project_dir
+    if project_dir.name == "state" and (project_dir.parent / "context_files").exists():
+        context_root = project_dir.parent
 
     # Load immutable definition
     definition = _load_yaml(project_dir / "definition.yaml")
@@ -238,7 +239,7 @@ def load_context(
 
     # Save any attachments to context_files/
     if reply_attachments:
-        saved = save_attachments_to_context(reply_attachments, project_dir)
+        saved = save_attachments_to_context(reply_attachments, context_root)
         for s in saved:
             print(f"  [phase1] Saved attachment: {s}", file=sys.stderr)
 
@@ -316,7 +317,7 @@ def load_context(
         )
 
     # Load context files
-    context_files_summary = _load_context_files(project_dir)
+    context_files_summary = _load_context_files(context_root)
     if context_files_summary:
         file_count = context_files_summary.count("### ")
         print(f"  [phase1] Loaded {file_count} context file(s)", file=sys.stderr)

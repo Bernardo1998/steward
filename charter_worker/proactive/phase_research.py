@@ -104,6 +104,15 @@ Respond with ONLY a JSON block fenced with ```json ... ``` containing:
         return {"findings": [], "summary": f"Search failed: {e}", "error": str(e)}
 
 
+def _int_cfg(cfg: dict, key: str, default: int, minimum: int = 1) -> int:
+    """Parse a positive integer runtime config value with fallback."""
+    try:
+        value = int(cfg.get(key, default))
+    except (AttributeError, TypeError, ValueError):
+        value = default
+    return max(minimum, value)
+
+
 def research(
     context: dict,
     budget_tier: str = "full",
@@ -124,11 +133,24 @@ def research(
     exploration_log = context["exploration_log"]
     current_cycle = status.get("cycle_number", 0) + 1
     days_since_reply = context.get("days_since_reply", 0)
+    runtime_cfg = definition.get("runtime", {})
+    if not isinstance(runtime_cfg, dict):
+        runtime_cfg = {}
+    runtime_override = context.get("_runtime", {})
+    if isinstance(runtime_override, dict) and runtime_override:
+        runtime_cfg = {**runtime_cfg, **runtime_override}
 
     open_questions = status.get("open_questions", [])
     guardrail_results = []
     all_findings = []
     new_log_entries = []
+    max_queries_per_cycle = _int_cfg(runtime_cfg, "max_queries_per_cycle", 2)
+    lightweight_timeout = _int_cfg(runtime_cfg, "lightweight_timeout", 600)
+    max_workers = _int_cfg(runtime_cfg, "max_workers", 2)
+    planner_timeout = _int_cfg(runtime_cfg, "planner_timeout", 600)
+    worker_timeout = _int_cfg(runtime_cfg, "worker_timeout", 900)
+    aggregator_timeout = _int_cfg(runtime_cfg, "aggregator_timeout", 600)
+    reviewer_timeout = _int_cfg(runtime_cfg, "reviewer_timeout", 600)
 
     # Generate queries
     queries = generate_queries(open_questions, definition)
@@ -147,9 +169,6 @@ def research(
                     "source_question_idx": -1,
                 })
 
-    # Cap total executed queries per cycle.
-    # With bounded worker searches (~70s each), 2 queries ≈ 10 min.
-    MAX_QUERIES_PER_CYCLE = 2
     executed_count = 0
 
     # Dedup and execute
@@ -163,11 +182,11 @@ def research(
             print(f"  [phase2] Skipping duplicate query: {query[:60]}...", file=sys.stderr)
             continue
 
-        if executed_count >= MAX_QUERIES_PER_CYCLE:
-            print(f"  [phase2] Query cap reached ({MAX_QUERIES_PER_CYCLE}), deferring remaining queries", file=sys.stderr)
+        if executed_count >= max_queries_per_cycle:
+            print(f"  [phase2] Query cap reached ({max_queries_per_cycle}), deferring remaining queries", file=sys.stderr)
             break
 
-        print(f"  [phase2] Researching ({executed_count + 1}/{MAX_QUERIES_PER_CYCLE} max): {query[:80]}...", file=sys.stderr)
+        print(f"  [phase2] Researching ({executed_count + 1}/{max_queries_per_cycle} max): {query[:80]}...", file=sys.stderr)
         executed_count += 1
         timestamp = datetime.now().isoformat()
 
@@ -178,11 +197,11 @@ def research(
                     query,
                     context=definition.get("goal", ""),
                     output_dir=output_dir,
-                    max_workers=2,
-                    worker_timeout=900,
-                    planner_timeout=600,
-                    aggregator_timeout=600,
-                    reviewer_timeout=600,
+                    max_workers=max_workers,
+                    worker_timeout=worker_timeout,
+                    planner_timeout=planner_timeout,
+                    aggregator_timeout=aggregator_timeout,
+                    reviewer_timeout=reviewer_timeout,
                 )
                 # Extract findings from deep_research result
                 synthesis = result.get("synthesis", {})
@@ -214,7 +233,7 @@ def research(
                 })
         else:
             # Lightweight search
-            result = _run_lightweight_search(query)
+            result = _run_lightweight_search(query, timeout=lightweight_timeout)
             findings = result.get("findings", [])
             all_findings.extend(findings)
 

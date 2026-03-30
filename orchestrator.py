@@ -253,13 +253,22 @@ def _diagnose_and_fix(task_id: str, task_path: str, reason: str,
         "fix_description": "", "should_retry": False,
     }
 
-    # Don't diagnose the same task twice in one day
+    # Check prior diagnosis history for this task today
     diag_state = state.setdefault("diagnoses", {})
-    if diag_state.get(task_id, {}).get("date") == date_str:
-        prev = diag_state[task_id]
-        print(f"  [orch] {task_id}: already diagnosed today, reusing result",
-              file=sys.stderr)
-        return prev.get("result", result)
+    prior_diag = diag_state.get(task_id, {})
+    retry_count = state.get("task_runs", {}).get(task_id, {}).get("retry_count", 0)
+
+    if prior_diag.get("date") == date_str:
+        if retry_count <= 1:
+            # First retry: reuse the original diagnosis
+            prev = prior_diag
+            print(f"  [orch] {task_id}: already diagnosed today, reusing result",
+                  file=sys.stderr)
+            return prev.get("result", result)
+        else:
+            # Retry #2+: re-diagnose with failure history
+            print(f"  [orch] {task_id}: retry #{retry_count}, re-diagnosing with prior failure context",
+                  file=sys.stderr)
 
     # Gather crash context
     log_file = REPO_ROOT / task_path / "logs" / f"cycle_{date_str}.log"
@@ -279,6 +288,35 @@ def _diagnose_and_fix(task_id: str, task_path: str, reason: str,
         raw = run_py.read_text()
         entry_text = raw[:6000] if len(raw) > 6000 else raw
 
+    # Build prior diagnosis context (for re-diagnosis on retry #2+)
+    prior_diag_text = ""
+    if prior_diag.get("date") == date_str and retry_count >= 2:
+        prev_result = prior_diag.get("result", {})
+        prior_diag_text = f"""
+PRIOR DIAGNOSIS (this fix was already tried and DID NOT WORK):
+  Diagnosis: {prev_result.get('diagnosis', 'unknown')}
+  Fix applied: {prev_result.get('fix_applied', False)}
+  Fix description: {prev_result.get('fix_description', 'none')}
+  Retry count so far: {retry_count}
+
+The previous fix did not resolve the issue. You must try a DIFFERENT approach.
+Common patterns when code fixes don't help:
+- The timeout budget (max_runtime_minutes in charter.yaml) may be too short — increase it
+- A config file (schedule.yaml, projects.yaml) may need changing, not just code
+- The task may need a simpler workflow path for this specific day/project
+"""
+
+    # Gather additional config file context
+    config_files_text = ""
+    task_config_dir = task_dir / "config"
+    if task_config_dir.exists():
+        for cfg_file in sorted(task_config_dir.glob("*.yaml"))[:3]:
+            try:
+                cfg_content = cfg_file.read_text()[:1500]
+                config_files_text += f"\n--- {cfg_file.name} ---\n{cfg_content}\n"
+            except OSError:
+                pass
+
     # Build the diagnostic prompt
     prompt = f"""\
 You are a self-healing orchestrator agent. A task has crashed and you must diagnose
@@ -288,12 +326,13 @@ TASK: {task_id}
 PATH: {task_path}
 DATE: {date_str}
 FAILURE REASON: {reason}
+RETRY COUNT: {retry_count}
 
 CHARTER CONFIG:
 ```yaml
 {charter_text[:2000]}
 ```
-
+{prior_diag_text}
 CRASH LOG (last 4000 chars):
 ```
 {log_text if log_text else "(empty — process produced no output before crash)"}
@@ -303,14 +342,18 @@ ENTRY POINT (run.py, first 6000 chars):
 ```python
 {entry_text if entry_text else "(no run.py found)"}
 ```
-
+{f"TASK CONFIG FILES:{config_files_text}" if config_files_text else ""}
 YOUR JOB:
 1. Read the crash log and task code to understand WHY the task failed.
 2. If the fix requires a code or config change, MAKE THE CHANGE directly.
    - You have write access to files under {task_dir}
    - You can also read/edit files in the charter-worker library at /mnt/c/charter-worker/
-3. If the failure is environmental (network, disk, etc.), note it but don't retry blindly.
-4. If the log is empty, check for common issues: import errors, missing dependencies,
+   - You CAN modify charter.yaml (e.g., increase max_runtime_minutes if the task needs more time)
+   - You CAN modify config files (schedule.yaml, projects.yaml) under {task_dir}/config/
+3. If a TIMEOUT failure and the code looks correct, consider increasing max_runtime_minutes
+   in charter.yaml. Use conservative increments (e.g., 45→60, 60→90). Max ceiling: 120 min.
+4. If the failure is environmental (network, disk, etc.), note it but don't retry blindly.
+5. If the log is empty, check for common issues: import errors, missing dependencies,
    stale state files, wrong file paths.
 
 After investigating, output EXACTLY one JSON block (fenced with ```json ... ```) with:
@@ -676,6 +719,10 @@ def spawn_agent(task: dict, charter: dict, date_str: str) -> subprocess.Popen:
         entrypoint = execution.get("entrypoint", "python run.py")
         env = os.environ.copy()
         env["CHARTER_INSTANCE_ROOT"] = str(REPO_ROOT)
+        env["CHARTER_RUN_DATE"] = date_str
+        env["CHARTER_SUMMARY_DIR"] = summary_dir
+        env["CHARTER_TASK_ID"] = task_id
+        env["CHARTER_TASK_PATH"] = task_path
         cmd = ["bash", "-lc", entrypoint]
     elif agent == "claude":
         cmd = [
@@ -1029,6 +1076,9 @@ def main():
             retry_count += 1
             task_state["retry_count"] = retry_count
             task_state["last_retry_date"] = date_str
+
+            # Reload charter in case diagnostic agent modified it (e.g., timeout increase)
+            charter = load_charter(task_path)
 
             diag_note = ""
             if diag.get("fix_applied"):
