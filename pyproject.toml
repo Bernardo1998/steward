@@ -19,6 +19,8 @@ all = ["markdown>=3.4", "weasyprint>=60.0"]
 charter-orchestrator = "charter_worker.orchestrator:main"
 charter-init = "init_cmd:main"
 charter-status = "status_cmd:main"
+charter-promote = "charter_worker.promote:main"
+charter-add-task = "charter_worker.add_task:main"
 
 [tool.setuptools.packages.find]
 include = ["charter_worker*"]
