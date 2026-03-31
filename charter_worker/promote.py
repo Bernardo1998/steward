@@ -4,9 +4,17 @@ Analyzes an agent-mode task's execution history to identify which steps
 are deterministic (scriptable) vs. need LLM judgment, then generates
 a candidate direct-mode run.py for review.
 
-Usage:
+Primary flow (email-based, no CLI needed):
+    1. Reflection pipeline detects stable agent-mode task
+    2. Promotion suggestion appears in daily digest email
+    3. User replies: "approve <task>", "reject <task>: reason", "pause <task>"
+    4. Next reflection cycle reads reply and acts
+
+Manual override (CLI):
     charter-promote <task_id> --last 5
-    charter-promote <task_id> --last 10 --apply
+    charter-promote <task_id> --apply
+    charter-promote <task_id> --reject "reason"
+    charter-promote <task_id> --pause
 """
 
 import argparse
@@ -114,6 +122,9 @@ def collect_promotion_data(
 
     task_runs = orch_state.get("task_runs", {}).get(task_id, {})
 
+    # Prior promotion feedback
+    prior_rejection = get_prior_rejection(instance_root, task_id)
+
     return {
         "task_id": task_id,
         "task_dir": str(task_dir),
@@ -128,12 +139,25 @@ def collect_promotion_data(
             "retry_count": task_runs.get("retry_count", 0),
         },
         "current_mode": charter.get("execution", {}).get("agent", "unknown"),
+        "prior_rejection_reason": prior_rejection,
     }
 
 
 # ---------------------------------------------------------------------------
 # Step 2: Analyze stability (1 LLM call)
 # ---------------------------------------------------------------------------
+
+def _prior_rejection_section(data: dict) -> str:
+    reason = data.get("prior_rejection_reason", "")
+    if not reason:
+        return ""
+    return (
+        "\nPRIOR PROMOTION REJECTION:\n"
+        "The user previously rejected a promotion suggestion for this task:\n"
+        f'"{reason}"\n'
+        "Take this feedback into account and address the concern in your analysis.\n"
+    )
+
 
 def analyze_promotion_readiness(data: dict) -> dict:
     """Analyze whether the task is ready for promotion from agent to direct mode.
@@ -166,7 +190,7 @@ RECENT SUMMARIES:
 RETRY HISTORY:
   Last success: {data['retry_history']['last_success_date']}
   Recent retry count: {data['retry_history']['retry_count']}
-
+{_prior_rejection_section(data)}
 Analyze:
 1. What steps does the agent repeat identically (or near-identically) every cycle?
    These are candidates for scripting.
@@ -443,6 +467,156 @@ def apply_promotion(task_dir: Path):
 
 
 # ---------------------------------------------------------------------------
+# Promotion state (stored in reflection_state.json)
+# ---------------------------------------------------------------------------
+
+def load_promotion_state(instance_root: Path) -> dict:
+    """Load promotion tracking state from reflection_state.json."""
+    from .reflection.state import load_reflection_state
+    rstate = load_reflection_state(instance_root)
+    return rstate.get("promotion", {})
+
+
+def save_promotion_state(instance_root: Path, promotion: dict):
+    """Save promotion tracking state to reflection_state.json."""
+    from .reflection.state import load_reflection_state, save_reflection_state
+    rstate = load_reflection_state(instance_root)
+    rstate["promotion"] = promotion
+    save_reflection_state(instance_root, rstate)
+
+
+def record_promotion_feedback(
+    instance_root: Path,
+    task_id: str,
+    action: str,
+    reason: str = "",
+):
+    """Record user feedback on a promotion suggestion.
+
+    action: "approve" | "reject" | "pause"
+    reason: user's explanation (for reject)
+    """
+    promo = load_promotion_state(instance_root)
+    task_promo = promo.setdefault(task_id, {})
+
+    # Append to feedback history
+    feedback_history = task_promo.setdefault("feedback_history", [])
+    feedback_history.append({
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "action": action,
+        "reason": reason,
+    })
+    # Keep last 10
+    if len(feedback_history) > 10:
+        task_promo["feedback_history"] = feedback_history[-10:]
+
+    if action == "approve":
+        task_promo["status"] = "approved"
+        task_promo["approved_date"] = datetime.now().strftime("%Y-%m-%d")
+    elif action == "reject":
+        task_promo["status"] = "rejected"
+        task_promo["last_rejection"] = {
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "reason": reason,
+        }
+    elif action == "pause":
+        task_promo["status"] = "paused"
+        task_promo["paused_date"] = datetime.now().strftime("%Y-%m-%d")
+
+    save_promotion_state(instance_root, promo)
+
+
+def is_promotion_paused(instance_root: Path, task_id: str) -> bool:
+    """Check if promotion suggestions are paused for a task."""
+    promo = load_promotion_state(instance_root)
+    return promo.get(task_id, {}).get("status") == "paused"
+
+
+def get_prior_rejection(instance_root: Path, task_id: str) -> str:
+    """Get the most recent rejection reason, or empty string."""
+    promo = load_promotion_state(instance_root)
+    task_promo = promo.get(task_id, {})
+    rejection = task_promo.get("last_rejection", {})
+    return rejection.get("reason", "")
+
+
+def parse_promotion_feedback_from_reply(reply_text: str) -> list[dict]:
+    """Parse promotion-related commands from a user's email reply.
+
+    Recognized patterns:
+        approve <task_id>
+        reject <task_id>: <reason>
+        pause promotion <task_id>
+        resume promotion <task_id>
+
+    Returns list of {task_id, action, reason} dicts.
+    """
+    import re
+    commands = []
+
+    for line in reply_text.split("\n"):
+        line = line.strip().lower()
+
+        # "approve daily_planner"
+        m = re.match(r"approve\s+(\w+)", line)
+        if m:
+            commands.append({"task_id": m.group(1), "action": "approve", "reason": ""})
+            continue
+
+        # "reject daily_planner: the agent adds inbox interpretation"
+        m = re.match(r"reject\s+(\w+)\s*:\s*(.+)", line)
+        if m:
+            commands.append({"task_id": m.group(1), "action": "reject", "reason": m.group(2).strip()})
+            continue
+
+        # "pause promotion daily_planner"
+        m = re.match(r"pause\s+(?:promotion\s+)?(\w+)", line)
+        if m:
+            commands.append({"task_id": m.group(1), "action": "pause", "reason": ""})
+            continue
+
+        # "resume promotion daily_planner"
+        m = re.match(r"resume\s+(?:promotion\s+)?(\w+)", line)
+        if m:
+            commands.append({"task_id": m.group(1), "action": "resume", "reason": ""})
+            continue
+
+    return commands
+
+
+def generate_promotion_digest_section(
+    instance_root: Path,
+    task_id: str,
+    analysis: dict,
+) -> str:
+    """Generate a markdown section for the daily digest suggesting promotion.
+
+    Designed to be included in the reflection health report.
+    """
+    readiness = analysis.get("readiness", "unknown")
+    mode = analysis.get("recommended_mode", "?")
+    cost = analysis.get("estimated_cost_reduction", "?")
+    attention = analysis.get("estimated_attention_reduction", "?")
+    rationale = analysis.get("rationale", "")
+
+    lines = [
+        f"### Promotion Suggestion: {task_id}",
+        "",
+        f"**Readiness**: {readiness} | **Recommended**: {mode} | **Cost reduction**: {cost}",
+        f"**Attention reduction**: {attention}",
+        "",
+        f"{rationale}",
+        "",
+        "**To respond**, reply to this email with one of:",
+        f"- `approve {task_id}` — apply the promotion",
+        f"- `reject {task_id}: <your reason>` — reject with feedback for next analysis",
+        f"- `pause promotion {task_id}` — stop suggesting promotion for this task",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -455,6 +629,12 @@ def main():
                         help="Number of recent cycles to analyze (default: 5)")
     parser.add_argument("--apply", action="store_true",
                         help="Apply promotion (backup + swap files)")
+    parser.add_argument("--reject", type=str, default=None, metavar="REASON",
+                        help="Reject promotion with reason (saved for next analysis)")
+    parser.add_argument("--pause", action="store_true",
+                        help="Pause future promotion suggestions for this task")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume promotion suggestions for a paused task")
     parser.add_argument("--instance-dir", default=None,
                         help="Instance root directory")
     args = parser.parse_args()
@@ -462,6 +642,24 @@ def main():
     instance_root = Path(args.instance_dir) if args.instance_dir else Path(
         os.environ.get("CHARTER_INSTANCE_ROOT", ".")
     )
+
+    if args.reject is not None:
+        record_promotion_feedback(instance_root, args.task_id, "reject", args.reject)
+        print(f"Rejection recorded for {args.task_id}: {args.reject}", file=sys.stderr)
+        return
+
+    if args.pause:
+        record_promotion_feedback(instance_root, args.task_id, "pause")
+        print(f"Promotion suggestions paused for {args.task_id}.", file=sys.stderr)
+        return
+
+    if args.resume:
+        promo = load_promotion_state(instance_root)
+        if args.task_id in promo:
+            promo[args.task_id]["status"] = "active"
+            save_promotion_state(instance_root, promo)
+        print(f"Promotion suggestions resumed for {args.task_id}.", file=sys.stderr)
+        return
 
     if args.apply:
         # Find task dir

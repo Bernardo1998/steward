@@ -20,6 +20,11 @@ from charter_worker.promote import (
     generate_promoted_workflow,
     write_promotion_artifacts,
     apply_promotion,
+    record_promotion_feedback,
+    is_promotion_paused,
+    get_prior_rejection,
+    parse_promotion_feedback_from_reply,
+    generate_promotion_digest_section,
 )
 
 
@@ -332,3 +337,92 @@ class TestPromoteEndToEnd:
         assert workflow["run_py_code"] is None
         assert workflow["charter_yaml"] is None
         assert "NOT READY" in workflow["report_md"]
+
+
+# ---------------------------------------------------------------------------
+# TestPromotionFeedback
+# ---------------------------------------------------------------------------
+
+class TestPromotionFeedback:
+    def test_record_rejection(self, task_instance):
+        record_promotion_feedback(task_instance, "my_agent_task", "reject",
+                                  "Agent adds inbox interpretation that script misses")
+        reason = get_prior_rejection(task_instance, "my_agent_task")
+        assert "inbox interpretation" in reason
+
+    def test_record_pause(self, task_instance):
+        record_promotion_feedback(task_instance, "my_agent_task", "pause")
+        assert is_promotion_paused(task_instance, "my_agent_task")
+
+    def test_not_paused_by_default(self, task_instance):
+        assert not is_promotion_paused(task_instance, "my_agent_task")
+
+    def test_rejection_included_in_collected_data(self, task_instance):
+        record_promotion_feedback(task_instance, "my_agent_task", "reject",
+                                  "Need LLM for inbox parsing")
+        data = collect_promotion_data(task_instance, "my_agent_task", last_n=1)
+        assert "inbox parsing" in data["prior_rejection_reason"]
+
+    def test_feedback_history_accumulates(self, task_instance):
+        record_promotion_feedback(task_instance, "my_agent_task", "reject", "reason 1")
+        record_promotion_feedback(task_instance, "my_agent_task", "reject", "reason 2")
+
+        from charter_worker.promote import load_promotion_state
+        promo = load_promotion_state(task_instance)
+        history = promo["my_agent_task"]["feedback_history"]
+        assert len(history) == 2
+
+
+class TestParsePromotionReply:
+    def test_parse_approve(self):
+        cmds = parse_promotion_feedback_from_reply("approve daily_planner")
+        assert len(cmds) == 1
+        assert cmds[0]["action"] == "approve"
+        assert cmds[0]["task_id"] == "daily_planner"
+
+    def test_parse_reject_with_reason(self):
+        cmds = parse_promotion_feedback_from_reply(
+            "reject daily_planner: the agent interprets ambiguous inbox items"
+        )
+        assert len(cmds) == 1
+        assert cmds[0]["action"] == "reject"
+        assert "ambiguous inbox" in cmds[0]["reason"]
+
+    def test_parse_pause(self):
+        cmds = parse_promotion_feedback_from_reply("pause promotion daily_planner")
+        assert len(cmds) == 1
+        assert cmds[0]["action"] == "pause"
+
+    def test_parse_resume(self):
+        cmds = parse_promotion_feedback_from_reply("resume promotion daily_planner")
+        assert len(cmds) == 1
+        assert cmds[0]["action"] == "resume"
+
+    def test_parse_multiple_commands(self):
+        text = "approve daily_planner\nreject weekly_planner: not stable yet\npause ltt_agent"
+        cmds = parse_promotion_feedback_from_reply(text)
+        assert len(cmds) == 3
+
+    def test_ignore_non_commands(self):
+        cmds = parse_promotion_feedback_from_reply("Thanks, looks good! Keep up the work.")
+        assert len(cmds) == 0
+
+
+class TestDigestSection:
+    def test_generates_markdown(self, task_instance):
+        analysis = {
+            "readiness": "ready",
+            "recommended_mode": "direct",
+            "estimated_cost_reduction": "90%",
+            "estimated_attention_reduction": "No more agent drift",
+            "rationale": "Task is fully deterministic.",
+        }
+        section = generate_promotion_digest_section(
+            task_instance, "my_agent_task", analysis
+        )
+        assert "Promotion Suggestion" in section
+        assert "my_agent_task" in section
+        assert "90%" in section
+        assert "approve my_agent_task" in section
+        assert "reject my_agent_task" in section
+        assert "pause promotion my_agent_task" in section
