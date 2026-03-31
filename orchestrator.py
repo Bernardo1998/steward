@@ -235,10 +235,11 @@ def check_preflight(task_id: str, charter: dict) -> list[str]:
 # Self-healing: diagnose & fix crashed tasks
 # ---------------------------------------------------------------------------
 
-_DIAGNOSE_TIMEOUT = 600  # 10 minutes max for diagnosis agent
+_DIAGNOSE_TIMEOUT = 600  # default; overridden by --diagnose-timeout
 
 def _diagnose_and_fix(task_id: str, task_path: str, reason: str,
-                      date_str: str, state: dict) -> dict:
+                      date_str: str, state: dict,
+                      diagnose_timeout: int = _DIAGNOSE_TIMEOUT) -> dict:
     """Spawn a Claude Code agent to diagnose and fix a crashed task.
 
     Returns dict with:
@@ -376,7 +377,7 @@ Be concise. Focus on fixing, not explaining."""
             prompt,
             working_dir=task_dir,
             add_dir=REPO_ROOT,
-            timeout=_DIAGNOSE_TIMEOUT,
+            timeout=diagnose_timeout,
         )
         output = proc.stdout or ""
 
@@ -411,7 +412,7 @@ Be concise. Focus on fixing, not explaining."""
 
     except subprocess.TimeoutExpired:
         result["diagnosed"] = True
-        result["diagnosis"] = f"Diagnostic agent timed out after {_DIAGNOSE_TIMEOUT}s"
+        result["diagnosis"] = f"Diagnostic agent timed out after {diagnose_timeout}s"
         result["should_retry"] = True  # try anyway
         print(f"  [orch] {task_id}: diagnostic agent timed out", file=sys.stderr)
     except Exception as e:
@@ -515,7 +516,8 @@ def _send_failure_report(task_id: str, task_path: str, charter: dict,
             json.dump(fallback_json, fj, indent=2)
 
 
-def _check_unreported_tasks(tasks: list[dict], date_str: str, state: dict):
+def _check_unreported_tasks(tasks: list[dict], date_str: str, state: dict,
+                            diagnose_timeout: int = _DIAGNOSE_TIMEOUT):
     """Pre-pass: detect timed-out/crashed tasks and send failure emails.
 
     Runs at the start of each orchestrator cycle. For each locked task:
@@ -605,7 +607,8 @@ def _check_unreported_tasks(tasks: list[dict], date_str: str, state: dict):
         else:
             # --- Self-healing: diagnose before reporting ---
             diagnosis = _diagnose_and_fix(task_id, task_path, reason,
-                                          lock_date, state)
+                                          lock_date, state,
+                                          diagnose_timeout=diagnose_timeout)
 
             # If diagnosis applied a fix, remove stale fallback summary so
             # retry generates a fresh one
@@ -939,6 +942,12 @@ def main():
     parser.add_argument("--force", nargs="*", metavar="TASK_ID", help="Force-run these tasks regardless of schedule (e.g., --force weekly_planner)")
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"))
     parser.add_argument("--instance-dir", default=None, help="Instance root directory (where tasks/ lives)")
+    parser.add_argument("--digest-hour", type=int, default=5, help="Hour to send daily digest (default: 5)")
+    parser.add_argument("--reflection-hour", type=int, default=4, help="Hour to run daily reflection (default: 4)")
+    parser.add_argument("--diagnose-timeout", type=int, default=600, help="Max seconds for diagnostic agent (default: 600)")
+    parser.add_argument("--sync-wait-threshold", type=int, default=15, help="Max runtime (min) to wait synchronously for short tasks (default: 15)")
+    parser.add_argument("--max-retries", type=int, default=3, help="Max retries per task per day (default: 3)")
+    parser.add_argument("--digest-max-retries", type=int, default=10, help="Max digest email retry attempts (default: 10)")
     args = parser.parse_args()
 
     # Resolve and init paths
@@ -958,7 +967,8 @@ def main():
         return
 
     # Pre-pass: check for unreported failures from previous cycles
-    _check_unreported_tasks(tasks, date_str, state)
+    _check_unreported_tasks(tasks, date_str, state,
+                            diagnose_timeout=args.diagnose_timeout)
 
     # Determine what's due
     spawned = []
@@ -1018,7 +1028,7 @@ def main():
         max_rt = t["charter"].get("schedule", {}).get("max_runtime_minutes", 60)
         task_id = t["id"]
 
-        if max_rt <= 15:
+        if max_rt <= args.sync_wait_threshold:
             print(f"  [orch] Waiting for {task_id} (max {max_rt} min)...", file=sys.stderr)
             try:
                 t["proc"].wait(timeout=max_rt * 60)
@@ -1155,7 +1165,7 @@ def main():
     # -----------------------------------------------------------------------
     # Daily reflection: proactive self-improvement (runs once at 4 AM)
     # -----------------------------------------------------------------------
-    REFLECTION_HOUR = 4
+    REFLECTION_HOUR = args.reflection_hour
     reflection_ran = state.get("last_reflection_date") == date_str
 
     if not reflection_ran and now.hour >= REFLECTION_HOUR:
@@ -1180,7 +1190,7 @@ def main():
     # -----------------------------------------------------------------------
     # Send digest at DIGEST_HOUR (default 5 AM) so short tasks have time to
     # complete. Include whatever summaries exist — don't wait for long tasks.
-    DIGEST_HOUR = 5
+    DIGEST_HOUR = args.digest_hour
     digest_pending = state.get("digest_pending", False)
     digest_file_written = state.get("last_digest_date") == date_str
 
@@ -1212,7 +1222,7 @@ def main():
     elif digest_pending:
         # Retry pending digest email on later cycles
         digest_retry_count = state.get("digest_retry_count", 0)
-        if digest_retry_count < 10:
+        if digest_retry_count < args.digest_max_retries:
             print(f"\n[orch] Retrying digest email (attempt {digest_retry_count + 1}/10)...",
                   file=sys.stderr)
             result = collect_and_send_digest(date_str, state)
@@ -1225,7 +1235,7 @@ def main():
                 state["digest_retry_count"] = 0
                 print(f"  [orch] Digest email delivered on retry", file=sys.stderr)
         else:
-            print(f"  [orch] Digest email: max retries (10) reached, giving up", file=sys.stderr)
+            print(f"  [orch] Digest email: max retries ({args.digest_max_retries}) reached, giving up", file=sys.stderr)
             state["digest_pending"] = False
 
     save_state(state)
