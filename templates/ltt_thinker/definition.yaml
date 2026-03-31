@@ -30,6 +30,20 @@ success_criteria:
   - "[Concrete deliverable 2 — e.g., actionable recommendation for X decision]"
   - "[Concrete deliverable 3]"
 
+# Actions — what the runner can do each cycle
+actions:
+  web_search:
+    enabled: true
+  # experiment:
+  #   enabled: false
+  #   repo: "/path/to/experiment/repo"
+  #   confidence_threshold: 4
+  #   timeout: 600
+
+# Report
+report:
+  email_prefix: "[MY-PROJECT]"
+
 # Optional: point to a paper vault or other reference sources
 # reference_sources:
 #   paper_vault: "tasks/paper_reader/vault/papers/"
