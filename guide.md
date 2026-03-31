@@ -506,12 +506,118 @@ The orchestrator runs `bash -lc "python run.py"` in the task directory. Your
 `run.py` must handle everything: reading state, calling LLMs, writing summaries,
 sending emails.
 
-See `charter_worker.proactive.*` modules for reusable components:
+### Key difference from agent mode
+
+In **agent mode** (`agent: "codex"` or `"claude"`), the LLM agent is the workflow
+driver — it reads `task.md` and autonomously decides what to do each cycle.
+
+In **direct mode** (`agent: "direct"`), your Python script is the driver. It
+controls the exact sequence of operations. The LLM is only called for specific
+steps that genuinely need reasoning (synthesis, evaluation, summarization).
+Everything else is deterministic Python.
+
+```
+Agent mode:   LLM reads task.md → decides what to do → runs tools → writes output
+Direct mode:  Python script → step1() → call_llm() → step3() → save_state()
+                                            ↑
+                               only this step uses the LLM
+```
+
+### Making LLM calls from direct-mode tasks
+
+Use `call_llm_json()` from `charter_worker.proactive.llm` for structured output,
+or `call_llm()` for raw text. These automatically use whichever CLI provider is
+configured (codex, claude, or custom — see README for provider configuration).
+
+```python
+#!/usr/bin/env python3
+"""Example direct-mode task with selective LLM calls."""
+
+import json, os, sys, time
+from pathlib import Path
+from datetime import datetime
+
+# Setup paths
+TASK_DIR = Path(__file__).resolve().parent
+REPO_ROOT = TASK_DIR.parent.parent
+os.environ.setdefault("CHARTER_INSTANCE_ROOT", str(REPO_ROOT))
+
+from charter_worker.proactive.llm import call_llm_json
+
+def load_state():
+    """Pure Python — no LLM needed."""
+    state_file = TASK_DIR / "state" / "state.json"
+    if state_file.exists():
+        return json.loads(state_file.read_text())
+    return {"last_run": None, "results": []}
+
+def gather_data():
+    """Pure Python — read files, call APIs, etc."""
+    return {"items": ["item1", "item2", "item3"]}
+
+def analyze_with_llm(data, state):
+    """This step genuinely needs LLM reasoning."""
+    prompt = f"""Analyze these items and suggest priorities.
+Items: {json.dumps(data['items'])}
+Previous results: {json.dumps(state.get('results', [])[-3:])}
+
+Respond with ONLY a JSON block fenced with ```json ... ``` containing:
+{{
+  "priorities": ["highest priority item", ...],
+  "rationale": "why this ordering"
+}}"""
+    try:
+        return call_llm_json(prompt, timeout=120)
+    except Exception as e:
+        print(f"LLM analysis failed: {e}", file=sys.stderr)
+        return {"priorities": data["items"], "rationale": "LLM unavailable, using original order"}
+
+def save_state(state):
+    """Pure Python — no LLM needed."""
+    state_dir = TASK_DIR / "state"
+    state_dir.mkdir(exist_ok=True)
+    (state_dir / "state.json").write_text(json.dumps(state, indent=2))
+
+def write_summary(result, started_at):
+    """Write summary files for the orchestrator to collect."""
+    summary_dir = Path(os.environ.get("CHARTER_SUMMARY_DIR",
+        f"{REPO_ROOT}/daily_summaries/{datetime.now():%Y-%m-%d}/tasks/my_task"))
+    summary_dir.mkdir(parents=True, exist_ok=True)
+
+    (summary_dir / "summary.md").write_text(
+        f"# My Task\\n\\n## Priorities\\n" +
+        "\\n".join(f"- {p}" for p in result["priorities"])
+    )
+    (summary_dir / "summary.json").write_text(json.dumps({
+        "task_id": "my_task",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "status": "success",
+        "tldr": result["priorities"][:2],
+        "metadata": {"duration_s": round(time.time() - started_at, 1)},
+    }, indent=2))
+
+if __name__ == "__main__":
+    started = time.time()
+    state = load_state()                    # pure Python
+    data = gather_data()                    # pure Python
+    result = analyze_with_llm(data, state)  # ONE LLM call
+    state["results"].append(result)
+    state["last_run"] = datetime.now().isoformat()
+    save_state(state)                       # pure Python
+    write_summary(result, started)          # pure Python
+```
+
+### Reusable components for direct-mode tasks
+
+`charter_worker.proactive.*` modules provide pre-built phases:
 - `phase_research.research()` — web search + deep research
 - `phase_synthesize.synthesize()` — extract claims, update hypothesis
 - `phase_feedback.send_ltt_email()` — compose and send report
 - `comm.email.send_email()` — raw email send
 - `proactive.gmail_reader.fetch_ltt_replies()` — read email replies
+
+All of these use `call_llm_json()` internally, so they automatically respect
+the configured CLI provider.
 
 ---
 
@@ -574,12 +680,16 @@ rm ~/my-instance/tasks/my_experiment/.lock
 
 ```
 ~/charter-worker/                    # Framework (git-tracked)
-  orchestrator.py                    # Main loop
+  orchestrator.py                    # Main loop (schedule, spawn, self-healing, digest)
   preflight.py                       # Constraint checker
   agent_loop.sh                      # Auto-resume wrapper
   charter_worker/                    # Python package
+    proactive/llm.py                 #   CLI-agnostic LLM abstraction (codex/claude/custom)
+    proactive/reflection/            #   Self-reflection system (daily health analysis)
+    proactive/phase_*.py             #   5-phase proactive research cycle
+    proactive/guardrails.py          #   G1-G12 guardrails
+    executor/agent.py                #   CLI agent session launcher
     comm/email.py                    #   Email sender
-    proactive/                       #   LTT research phases
     research/                        #   Deep research engine
     utils/helpers.py                 #   Utility functions
 
@@ -611,7 +721,7 @@ rm ~/my-instance/tasks/my_experiment/.lock
 ```
 [ ] Python 3.10+ installed
 [ ] Node.js 18+ installed
-[ ] codex or claude CLI installed and API key exported
+[ ] CLI agent installed: codex, claude, or custom (set CHARTER_LLM_CLI if not codex)
 [ ] charter-worker cloned and pip installed
 [ ] Instance directory created
 [ ] email_config.yaml configured with Gmail App Password

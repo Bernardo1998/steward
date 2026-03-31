@@ -69,7 +69,17 @@ When the agent's actions become repetitive and predictable, it's ready.
 ### Step 2: Extract the workflow
 
 Look at what the agent actually does each cycle. Write a `run.py` that does
-the same thing, calling LLM APIs only where genuine reasoning is needed.
+the same thing, calling `call_llm_json()` only where genuine reasoning is needed.
+The LLM abstraction (`charter_worker.proactive.llm`) handles provider selection
+automatically — your `run.py` works with codex, claude, or any custom CLI without
+code changes.
+
+```python
+from charter_worker.proactive.llm import call_llm_json
+
+# This one call uses whichever CLI is configured (codex/claude/custom)
+result = call_llm_json("Analyze this data: ...", timeout=120)
+```
 
 ### Step 3: Switch the charter
 

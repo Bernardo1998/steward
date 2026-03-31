@@ -25,10 +25,11 @@ there is no automatic detection of "this task is stable enough to promote."
 That is a research direction, not a shipped feature.
 
 ### Agent dependency
-Exploratory tasks require either [Codex CLI](https://github.com/openai/codex)
-or [Claude Code](https://claude.ai/code) installed and authenticated. The
-`hello_world` template avoids this dependency, but real agent-backed tasks
-need it.
+Exploratory tasks require a CLI coding agent installed and authenticated.
+Built-in support for [Codex CLI](https://github.com/openai/codex) and
+[Claude Code](https://claude.ai/code). Custom CLIs (Gemini Code, OpenCode, etc.)
+are supported via `CHARTER_LLM_CMD_TEMPLATE` — see README for configuration.
+The `hello_world` template avoids this dependency entirely.
 
 ### Email-only reporting
 Reports are sent via SMTP (Gmail). There is no Slack, webhook, or API
@@ -59,8 +60,10 @@ the workflow automatically is future work.
 ## What works well today
 
 - Hourly/daily/weekly task scheduling with lock management
+- CLI-agnostic provider abstraction (codex, claude, custom CLIs)
 - Direct-entrypoint tasks (zero LLM cost for routine work)
-- Self-healing on crash (diagnostic agent → fix → retry)
+- Reactive self-healing on crash (diagnostic agent → fix → retry)
+- Proactive self-reflection (daily multi-day failure analysis, durable fixes, engagement tracking)
 - Email feedback loop (reply to steer task behavior)
 - Proactive research with 10 guardrails (weeks of autonomous operation)
 - Experiment dispatch with budget tracking
