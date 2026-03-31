@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from charter_worker.actions import ActionResult, Action, WebSearchAction, LightweightSearchAction
+from charter_worker.actions import ActionResult, Action, WebSearchAction, LightweightSearchAction, ExperimentAction
 
 
 class TestActionResult:
@@ -169,3 +169,80 @@ class TestLightweightSearchAction:
 
         assert result.status == "failed"
         assert "timeout" in result.error
+
+
+class TestExperimentAction:
+    """ExperimentAction plans code via LLM, writes it, runs it, parses output."""
+
+    def test_successful_experiment(self, tmp_path):
+        repo = tmp_path / "experiment_repo"
+        repo.mkdir()
+
+        action = Action("experiment", config={
+            "repo": str(repo),
+            "suggestion": "Test basic arithmetic",
+            "planning_timeout": 30,
+            "timeout": 10,
+        })
+        ea = ExperimentAction()
+
+        # Mock LLM to return a simple plan
+        plan = {
+            "step_id": "test_arithmetic",
+            "description": "Verify 2+2=4",
+            "code": "import json\nresult = {'answer': 2+2}\nprint(json.dumps(result))\n",
+            "filename": "experiments/test_arithmetic.py",
+            "run_command": "python experiments/test_arithmetic.py",
+            "expected_outputs": [],
+        }
+        context = {"definition": {"goal": "test"}, "status": {"current_hypothesis": "test"}}
+
+        with patch("charter_worker.proactive.llm.call_llm_json", return_value=plan):
+            result = ea.execute(action, context)
+
+        assert result.action_type == "experiment"
+        assert result.status == "success"
+        assert "test_arithmetic" in result.summary
+        assert len(result.artifacts) >= 1  # at least the code file
+        assert result.metadata["step_id"] == "test_arithmetic"
+
+    def test_missing_repo_fails(self):
+        action = Action("experiment", config={})
+        ea = ExperimentAction()
+        result = ea.execute(action, context={})
+        assert result.status == "failed"
+        assert "repo" in result.error
+
+    def test_planning_failure(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        action = Action("experiment", config={"repo": str(repo)})
+        ea = ExperimentAction()
+        context = {"definition": {"goal": "test"}, "status": {}}
+
+        with patch("charter_worker.proactive.llm.call_llm_json", side_effect=RuntimeError("LLM down")):
+            result = ea.execute(action, context)
+
+        assert result.status == "failed"
+        assert "LLM down" in result.error
+
+    def test_experiment_script_failure(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        action = Action("experiment", config={"repo": str(repo), "timeout": 5})
+        ea = ExperimentAction()
+        context = {"definition": {"goal": "test"}, "status": {}}
+
+        plan = {
+            "step_id": "bad_step",
+            "description": "This will crash",
+            "code": "import sys; sys.exit(1)",
+            "filename": "experiments/bad.py",
+            "run_command": "python experiments/bad.py",
+            "expected_outputs": [],
+        }
+        with patch("charter_worker.proactive.llm.call_llm_json", return_value=plan):
+            result = ea.execute(action, context)
+
+        assert result.status == "failed"
+        assert result.metadata["step_id"] == "bad_step"

@@ -515,3 +515,55 @@ class TestReflectionWithFixture:
         from charter_worker.proactive.reflection.state import load_reflection_state
         rstate = load_reflection_state(instance_dir)
         assert "failure_streaks" in rstate
+
+
+# ---------------------------------------------------------------------------
+# C3: TestRunnerWithExperimentAction
+# ---------------------------------------------------------------------------
+
+class TestRunnerWithExperimentAction:
+    """CycleRunner with experiment action produces valid output."""
+
+    def test_runner_with_experiment(self, instance_dir):
+        task_dir = instance_dir / "tasks" / "runner_task"
+        summary_dir = instance_dir / "daily_summaries" / "test" / "tasks" / "runner_task"
+        exp_repo = instance_dir / "exp_repo"
+        exp_repo.mkdir()
+
+        # Update definition to enable experiments
+        defn = yaml.safe_load((task_dir / "definition.yaml").read_text())
+        defn["actions"]["experiment"] = {"enabled": True, "repo": str(exp_repo)}
+        (task_dir / "definition.yaml").write_text(yaml.dump(defn))
+
+        class TestRunner(CycleRunner):
+            def plan(self, context):
+                return [
+                    Action("experiment", config={"repo": str(exp_repo), "timeout": 10},
+                           query="Test arithmetic"),
+                ]
+
+        runner = TestRunner(
+            definition=task_dir / "definition.yaml",
+            state_dir=task_dir / "state",
+            summary_dir=summary_dir,
+        )
+
+        # Mock LLM planner, but let subprocess.run execute real Python
+        plan = {
+            "step_id": "add_test",
+            "description": "Verify addition",
+            "code": "print('result: 4')",
+            "filename": "experiments/add_test.py",
+            "run_command": "python experiments/add_test.py",
+            "expected_outputs": [],
+        }
+        with patch("charter_worker.proactive.llm.call_llm_json", return_value=plan):
+            runner.run_cycle()
+
+        sj = summary_dir / "summary.json"
+        assert sj.exists()
+        data = json.loads(sj.read_text())
+        assert data["status"] == "success"
+
+        # Verify experiment code was written
+        assert (exp_repo / "experiments" / "add_test.py").exists()
