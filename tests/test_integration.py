@@ -21,7 +21,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import orchestrator
+from charter_worker import orchestrator
 from charter_worker.runner import CycleRunner
 from charter_worker.actions import Action, ActionResult
 
@@ -414,7 +414,7 @@ class TestSelfHealingCycle:
             "fix_description": "Added missing import",
             "should_retry": True,
         }
-        with patch("charter_worker.proactive.llm.call_agent_write") as mock_agent:
+        with patch("charter_worker.llm.call_agent_write") as mock_agent:
             mock_proc = MagicMock()
             mock_proc.stdout = json.dumps(mock_diagnosis)
             mock_proc.returncode = 0
@@ -475,8 +475,8 @@ class TestReflectionWithFixture:
             json.dump(orch_state, f)
 
         # Run reflection collector
-        from charter_worker.proactive.reflection.collector import collect_reflection_data
-        from charter_worker.proactive.reflection.report import generate_health_report
+        from charter_worker.reflection.collector import collect_reflection_data
+        from charter_worker.reflection.report import generate_health_report
 
         ctx = collect_reflection_data(instance_dir, date_str, lookback_days=7)
 
@@ -507,12 +507,12 @@ class TestReflectionWithFixture:
             json.dump({"task_runs": {"simple_task": {"last_success_date": date_str, "last_date": date_str}},
                         "diagnoses": {}}, f)
 
-        from charter_worker.proactive.reflection.state import update_failure_streaks
+        from charter_worker.reflection.state import update_failure_streaks
 
         ctx_health = {"simple_task": {"days_failing": 0}}
         update_failure_streaks(instance_dir, ctx_health)
 
-        from charter_worker.proactive.reflection.state import load_reflection_state
+        from charter_worker.reflection.state import load_reflection_state
         rstate = load_reflection_state(instance_dir)
         assert "failure_streaks" in rstate
 
@@ -557,7 +557,7 @@ class TestRunnerWithExperimentAction:
             "run_command": "python experiments/add_test.py",
             "expected_outputs": [],
         }
-        with patch("charter_worker.proactive.llm.call_llm_json", return_value=plan):
+        with patch("charter_worker.llm.call_llm_json", return_value=plan):
             runner.run_cycle()
 
         sj = summary_dir / "summary.json"

@@ -117,7 +117,7 @@ class TestWebSearchAction:
             },
             "sources": [{"url": "http://example.com", "title": "Example"}],
         }
-        with patch("charter_worker.research.engine.run_research", return_value=mock_result):
+        with patch("charter_worker.search.engine.run_research", return_value=mock_result):
             result = ws.execute(action, context={})
 
         assert isinstance(result, ActionResult)
@@ -129,7 +129,7 @@ class TestWebSearchAction:
         action = Action("web_search", query="test")
         ws = WebSearchAction()
 
-        with patch("charter_worker.research.engine.run_research", side_effect=RuntimeError("search failed")):
+        with patch("charter_worker.search.engine.run_research", side_effect=RuntimeError("search failed")):
             result = ws.execute(action, context={})
 
         assert result.status == "failed"
@@ -139,7 +139,7 @@ class TestWebSearchAction:
         action = Action("web_search", query="test", config={"timeout": 30})
         ws = WebSearchAction()
 
-        with patch("charter_worker.research.engine.run_research", return_value={"synthesis": {}, "sources": []}):
+        with patch("charter_worker.search.engine.run_research", return_value={"synthesis": {}, "sources": []}):
             result = ws.execute(action, context={})
             assert result.status == "success"
 
@@ -152,7 +152,7 @@ class TestLightweightSearchAction:
         ls = LightweightSearchAction()
 
         mock_output = "Attention is a mechanism that allows models to focus on relevant parts..."
-        with patch("charter_worker.proactive.llm.call_llm", return_value=mock_output):
+        with patch("charter_worker.llm.call_llm", return_value=mock_output):
             result = ls.execute(action, context={})
 
         assert isinstance(result, ActionResult)
@@ -164,7 +164,7 @@ class TestLightweightSearchAction:
         action = Action("lightweight_search", query="test")
         ls = LightweightSearchAction()
 
-        with patch("charter_worker.proactive.llm.call_llm", side_effect=RuntimeError("timeout")):
+        with patch("charter_worker.llm.call_llm", side_effect=RuntimeError("timeout")):
             result = ls.execute(action, context={})
 
         assert result.status == "failed"
@@ -197,7 +197,7 @@ class TestExperimentAction:
         }
         context = {"definition": {"goal": "test"}, "status": {"current_hypothesis": "test"}}
 
-        with patch("charter_worker.proactive.llm.call_llm_json", return_value=plan):
+        with patch("charter_worker.llm.call_llm_json", return_value=plan):
             result = ea.execute(action, context)
 
         assert result.action_type == "experiment"
@@ -220,7 +220,7 @@ class TestExperimentAction:
         ea = ExperimentAction()
         context = {"definition": {"goal": "test"}, "status": {}}
 
-        with patch("charter_worker.proactive.llm.call_llm_json", side_effect=RuntimeError("LLM down")):
+        with patch("charter_worker.llm.call_llm_json", side_effect=RuntimeError("LLM down")):
             result = ea.execute(action, context)
 
         assert result.status == "failed"
@@ -241,7 +241,7 @@ class TestExperimentAction:
             "run_command": "python experiments/bad.py",
             "expected_outputs": [],
         }
-        with patch("charter_worker.proactive.llm.call_llm_json", return_value=plan):
+        with patch("charter_worker.llm.call_llm_json", return_value=plan):
             result = ea.execute(action, context)
 
         assert result.status == "failed"

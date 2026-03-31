@@ -14,7 +14,7 @@ import yaml
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import orchestrator
+from charter_worker import orchestrator
 
 
 @pytest.fixture

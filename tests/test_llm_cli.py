@@ -16,7 +16,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from charter_worker.proactive.llm import (
+from charter_worker.llm import (
     build_agent_cmd,
     detect_provider,
     call_llm,
@@ -329,7 +329,7 @@ class TestCallLlm:
         mock_proc.returncode = 0
         mock_proc.poll.return_value = 0
 
-        with patch("charter_worker.proactive.llm.detect_provider", return_value="codex"):
+        with patch("charter_worker.llm.detect_provider", return_value="codex"):
             with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
                 result = call_llm("test prompt", provider="codex")
                 assert result == "result text"
@@ -345,7 +345,7 @@ class TestCallLlm:
         mock_proc.returncode = 0
         mock_proc.poll.return_value = 0
 
-        with patch("charter_worker.proactive.llm.detect_provider", return_value="claude"):
+        with patch("charter_worker.llm.detect_provider", return_value="claude"):
             with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
                 result = call_llm("test prompt", provider="claude")
                 assert result == "result text"

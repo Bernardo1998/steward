@@ -58,7 +58,7 @@ class WebSearchAction:
         max_workers = action.config.get("max_workers", 2)
 
         try:
-            from .research.engine import run_research
+            from .search.engine import run_research
             result = run_research(
                 query,
                 context=context.get("definition", {}).get("goal", ""),
@@ -119,7 +119,7 @@ class LightweightSearchAction:
         timeout = action.config.get("timeout", 120)
 
         try:
-            from .proactive.llm import call_llm
+            from .llm import call_llm
             output = call_llm(query, search=True, timeout=timeout)
 
             findings = [{
@@ -208,7 +208,7 @@ Respond with ONLY a JSON block fenced with ```json ... ``` containing:
 }}"""
 
         try:
-            from .proactive.llm import call_llm_json
+            from .llm import call_llm_json
             plan = call_llm_json(plan_prompt, timeout=plan_timeout)
         except Exception as e:
             return ActionResult(

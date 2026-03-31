@@ -27,3 +27,4 @@ Thumbs.db
 email_config.yaml
 **/google_credentials.json
 **/google_token.json
+research_output/

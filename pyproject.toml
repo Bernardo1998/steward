@@ -16,7 +16,7 @@ email = ["markdown>=3.4", "weasyprint>=60.0"]
 all = ["markdown>=3.4", "weasyprint>=60.0"]
 
 [project.scripts]
-charter-orchestrator = "orchestrator:main"
+charter-orchestrator = "charter_worker.orchestrator:main"
 charter-init = "init_cmd:main"
 charter-status = "status_cmd:main"
 
