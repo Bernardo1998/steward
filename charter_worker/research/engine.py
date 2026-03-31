@@ -15,8 +15,10 @@ CLI: python3 -m charter_worker.research.cli "question"
 """
 
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -29,6 +31,33 @@ from typing import Any, Dict, List, Optional
 # ---------------------------------------------------------------------------
 # Subprocess wrapper
 # ---------------------------------------------------------------------------
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Terminate the Codex CLI process and any descendants it spawned."""
+    if proc.poll() is not None:
+        return
+
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            return
+
+    try:
+        proc.wait(timeout=5)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            return
 
 def _run_codex(
     prompt: str,
@@ -60,19 +89,26 @@ def _run_codex(
         cmd.extend(["-m", model])
     cmd.append("-")  # read prompt from stdin
 
-    result = subprocess.run(
+    proc = subprocess.Popen(
         cmd,
-        input=prompt,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout,
+        start_new_session=True,
     )
+    try:
+        stdout, stderr = proc.communicate(prompt, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _kill_process_group(proc)
+        stdout, stderr = proc.communicate()
+        raise subprocess.TimeoutExpired(cmd, timeout, output=stdout, stderr=stderr) from exc
 
-    output = result.stdout.strip()
+    output = stdout.strip()
     if not output:
-        stderr_hint = result.stderr.strip()[:300] if result.stderr else ""
+        stderr_hint = stderr.strip()[:300] if stderr else ""
         raise RuntimeError(
-            f"Codex returned empty output (exit {result.returncode}). "
+            f"Codex returned empty output (exit {proc.returncode}). "
             f"stderr hint: {stderr_hint}"
         )
     return output
@@ -501,6 +537,7 @@ def run_research(
     context: str = "",
     output_dir: Optional[str] = None,
     max_workers: int = 5,
+    max_subquestions: Optional[int] = None,
     model: Optional[str] = None,
     search: bool = True,
     planner_timeout: int = 600,
@@ -516,6 +553,8 @@ def run_research(
         output_dir: Directory for intermediate + final outputs. Auto-generated
             under ``research_output/YYYY-MM-DD/{slug}/`` if not provided.
         max_workers: Maximum parallel worker threads.
+        max_subquestions: Optional cap on planner output to keep the worker
+            fan-out bounded for short task budgets.
         model: Codex model override (e.g. ``o4-mini``).
         search: Enable ``--search`` on planner + workers (default True).
         planner_timeout: Planner phase timeout in seconds.
@@ -557,8 +596,21 @@ def run_research(
         plan = _run_planner(
             question, context, timeout=planner_timeout, model=model, search=search,
         )
-        (out / "plan.json").write_text(json.dumps(plan, indent=2))
         subquestions = plan.get("subquestions", [])
+        if max_subquestions and len(subquestions) > max_subquestions:
+            original_count = len(subquestions)
+            subquestions = subquestions[:max_subquestions]
+            plan["subquestions"] = subquestions
+            plan["truncation"] = {
+                "applied": True,
+                "original_subquestion_count": original_count,
+                "kept_subquestion_count": len(subquestions),
+            }
+            print(
+                "  -> Truncated planner output to "
+                f"{len(subquestions)} subquestions (from {original_count})"
+            )
+        (out / "plan.json").write_text(json.dumps(plan, indent=2))
         print(f"  -> {len(subquestions)} subquestions generated")
     except Exception as e:
         print(f"  -> Planner FAILED: {e}", file=sys.stderr)

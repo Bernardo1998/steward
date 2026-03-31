@@ -219,23 +219,28 @@ def load_context(
     """
     guardrail_results = []
     context_root = project_dir
+    state_root = project_dir
     if project_dir.name == "state" and (project_dir.parent / "context_files").exists():
         context_root = project_dir.parent
+    else:
+        candidate_state = project_dir / "state"
+        if candidate_state.exists():
+            state_root = candidate_state
 
     # Load immutable definition
-    definition = _load_yaml(project_dir / "definition.yaml")
+    definition = _load_yaml(context_root / "definition.yaml")
 
     # Load mutable status
-    status = _load_yaml(project_dir / "status.yaml")
+    status = _load_yaml(state_root / "status.yaml")
 
     # Load exploration log
-    exploration_log = _load_jsonl(project_dir / "exploration_log.jsonl")
+    exploration_log = _load_jsonl(state_root / "exploration_log.jsonl")
 
     # Load speculative buffer
-    buffer = _load_yaml(project_dir / "speculative_buffer.yaml")
+    buffer = _load_yaml(state_root / "speculative_buffer.yaml")
 
     # Check for email reply (text + attachments)
-    reply_text, reply_attachments = _check_email_replies(project_id, project_dir, state_meta)
+    reply_text, reply_attachments = _check_email_replies(project_id, state_root, state_meta)
 
     # Save any attachments to context_files/
     if reply_attachments:

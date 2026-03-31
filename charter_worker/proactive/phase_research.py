@@ -147,6 +147,7 @@ def research(
     max_queries_per_cycle = _int_cfg(runtime_cfg, "max_queries_per_cycle", 2)
     lightweight_timeout = _int_cfg(runtime_cfg, "lightweight_timeout", 600)
     max_workers = _int_cfg(runtime_cfg, "max_workers", 2)
+    max_subquestions = _int_cfg(runtime_cfg, "max_subquestions", 0, minimum=0)
     planner_timeout = _int_cfg(runtime_cfg, "planner_timeout", 600)
     worker_timeout = _int_cfg(runtime_cfg, "worker_timeout", 900)
     aggregator_timeout = _int_cfg(runtime_cfg, "aggregator_timeout", 600)
@@ -198,6 +199,7 @@ def research(
                     context=definition.get("goal", ""),
                     output_dir=output_dir,
                     max_workers=max_workers,
+                    max_subquestions=max_subquestions or None,
                     worker_timeout=worker_timeout,
                     planner_timeout=planner_timeout,
                     aggregator_timeout=aggregator_timeout,
