@@ -25,11 +25,8 @@ from typing import Optional
 
 def detect_agent() -> str:
     """Detect which CLI agent is available."""
-    if shutil.which("codex"):
-        return "codex"
-    if shutil.which("claude"):
-        return "claude"
-    raise RuntimeError("No CLI agent found. Install codex or claude.")
+    from ..proactive.llm import detect_provider
+    return detect_provider()
 
 
 def run_agent_session(
@@ -93,27 +90,22 @@ The JSON must contain:
     prompt_tmpfile.close()
 
     # Build command based on agent type
-    if agent == "codex":
-        if sandbox == "none":
-            cmd = [
-                "codex", "exec",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "-C", str(workspace),
-                "-",  # read from stdin
-            ]
-        else:
-            cmd = [
-                "codex", "exec", "--full-auto",
-                "-C", str(workspace),
-                "-",  # read from stdin
-            ]
-    elif agent == "claude":
+    from ..proactive.llm import build_agent_cmd
+    if agent == "codex" and sandbox not in ("none",):
+        # Codex full-auto mode (sandbox-specific, not in the shared builder)
         cmd = [
-            "claude", "-p", full_prompt,
-            "--dangerously-skip-permissions",
+            "codex", "exec", "--full-auto",
+            "-C", str(workspace),
+            "-",  # read from stdin
         ]
+        uses_stdin = True
     else:
-        raise ValueError(f"Unknown agent: {agent}")
+        cmd, uses_stdin = build_agent_cmd(
+            mode="write",
+            provider=agent,
+            working_dir=workspace,
+            prompt=full_prompt,
+        )
 
     print(f"  [agent] Launching {agent} session in {workspace}", file=sys.stderr)
     print(f"  [agent] Task: {task_prompt[:100]}...", file=sys.stderr)

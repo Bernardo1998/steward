@@ -371,16 +371,12 @@ Be concise. Focus on fixing, not explaining."""
 
     print(f"  [orch] {task_id}: spawning diagnostic agent...", file=sys.stderr)
     try:
-        proc = subprocess.run(
-            ["codex", "exec",
-             "--dangerously-bypass-approvals-and-sandbox",
-             "-C", str(task_dir),
-             "--add-dir", str(REPO_ROOT),
-             "-"],
-            input=prompt,
-            capture_output=True, text=True,
+        from charter_worker.proactive.llm import call_agent_write
+        proc = call_agent_write(
+            prompt,
+            working_dir=task_dir,
+            add_dir=REPO_ROOT,
             timeout=_DIAGNOSE_TIMEOUT,
-            cwd=str(task_dir),
         )
         output = proc.stdout or ""
 
@@ -707,13 +703,11 @@ def spawn_agent(task: dict, charter: dict, date_str: str) -> subprocess.Popen:
                 sandbox_mode,
             ]
         elif sandbox_mode == "none":
-            cmd = [
-                "codex", "exec",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "-C", str(working_dir),
-                "--add-dir", str(REPO_ROOT),
-                "-",  # read prompt from stdin
-            ]
+            from charter_worker.proactive.llm import build_agent_cmd
+            cmd, _uses_stdin = build_agent_cmd(
+                mode="write", provider="codex",
+                working_dir=working_dir, add_dir=REPO_ROOT,
+            )
         else:
             cmd = [
                 "codex", "exec", "--full-auto",
@@ -733,13 +727,23 @@ def spawn_agent(task: dict, charter: dict, date_str: str) -> subprocess.Popen:
         env["CHARTER_TASK_PATH"] = task_path
         cmd = ["bash", "-lc", entrypoint]
     elif agent == "claude":
-        cmd = [
-            "claude", "-p", prompt,
-            "--dangerously-skip-permissions",
-        ]
+        from charter_worker.proactive.llm import build_agent_cmd
+        cmd, _uses_stdin = build_agent_cmd(
+            mode="write", provider="claude",
+            prompt=prompt,
+        )
     else:
-        print(f"  [orch] Unknown agent '{agent}' for {task_id}, skipping", file=sys.stderr)
-        return None
+        # Try as a custom provider name
+        try:
+            from charter_worker.proactive.llm import build_agent_cmd
+            cmd, _uses_stdin = build_agent_cmd(
+                mode="write", provider=agent,
+                working_dir=working_dir, add_dir=REPO_ROOT,
+                prompt=prompt,
+            )
+        except ValueError:
+            print(f"  [orch] Unknown agent '{agent}' for {task_id}, skipping", file=sys.stderr)
+            return None
 
     auto_resume = agent == "codex" and execution.get("auto_resume", False)
     print(f"  [orch] Spawning {agent} for {task_id} in {working_dir}"

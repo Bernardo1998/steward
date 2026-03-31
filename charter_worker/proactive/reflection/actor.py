@@ -5,7 +5,6 @@ Executes remediation actions: durable fixes, smoke tests, config adjustments.
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -136,26 +135,15 @@ Output EXACTLY one JSON block (fenced with ```json ... ```) with:
 }}
 ```"""
 
-    if not shutil.which("codex"):
-        return {
-            "success": False,
-            "error": "codex CLI not found",
-            "fix_applied": False,
-        }
-
     print(f"  [reflect] Spawning durable fix agent for {task_id}...", file=sys.stderr)
 
     try:
-        proc = subprocess.run(
-            ["codex", "exec",
-             "--dangerously-bypass-approvals-and-sandbox",
-             "-C", str(task_dir),
-             "--add-dir", str(instance_root),
-             "-"],
-            input=prompt,
-            capture_output=True, text=True,
+        from ..llm import call_agent_write
+        proc = call_agent_write(
+            prompt,
+            working_dir=task_dir,
+            add_dir=instance_root,
             timeout=_FIX_AGENT_TIMEOUT,
-            cwd=str(task_dir),
         )
         output = proc.stdout or ""
 
