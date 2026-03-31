@@ -24,4 +24,4 @@ charter-status = "status_cmd:main"
 include = ["charter_worker*"]
 
 [tool.setuptools]
-py-modules = ["orchestrator", "preflight", "init_cmd", "status_cmd"]
+py-modules = ["init_cmd", "status_cmd"]
