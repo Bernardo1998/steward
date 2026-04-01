@@ -24,7 +24,7 @@ import yaml
 def _resolve_instance_root(cli_arg: str | None = None) -> Path:
     if cli_arg:
         return Path(cli_arg).resolve()
-    env = os.environ.get("CHARTER_INSTANCE_ROOT")
+    env = os.environ.get("STEWARD_INSTANCE_ROOT")
     if env:
         return Path(env).resolve()
     return Path.cwd()
@@ -253,7 +253,7 @@ def format_markdown(status: dict) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Show charter-worker task status"
+        description="Show steward task status"
     )
     parser.add_argument(
         "--instance-dir",

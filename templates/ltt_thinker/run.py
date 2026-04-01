@@ -16,10 +16,10 @@ from pathlib import Path
 TASK_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TASK_DIR.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-os.environ.setdefault("CHARTER_INSTANCE_ROOT", str(REPO_ROOT))
+os.environ.setdefault("STEWARD_INSTANCE_ROOT", str(REPO_ROOT))
 
-from charter_worker.runner import CycleRunner
-from charter_worker.actions import Action
+from steward.runner import CycleRunner
+from steward.actions import Action
 
 
 class LTTThinker(CycleRunner):

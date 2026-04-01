@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""charter-init — Bootstrap a new charter-worker instance directory.
+"""charter-init — Bootstrap a new steward instance directory.
 
 Creates the instance structure, copies a template task, and sets up
 .gitignore and registry so the user can immediately run:
@@ -36,7 +36,7 @@ def list_templates() -> list[str]:
 
 
 def init_instance(target: Path, template: str = "hello_world") -> dict:
-    """Create a new charter-worker instance directory.
+    """Create a new steward instance directory.
 
     Returns a dict with keys: created_dirs, copied_files, warnings.
     """
@@ -104,7 +104,7 @@ def init_instance(target: Path, template: str = "hello_world") -> dict:
     if not run_sh.exists():
         run_sh.write_text(
             '#!/bin/bash\nset -e\ncd "$(dirname "$0")"\n'
-            'CHARTER_INSTANCE_ROOT="$(pwd)" charter-orchestrator\n'
+            'STEWARD_INSTANCE_ROOT="$(pwd)" charter-orchestrator\n'
         )
         run_sh.chmod(0o755)
         result["copied_files"].append(str(run_sh))
@@ -114,7 +114,7 @@ def init_instance(target: Path, template: str = "hello_world") -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Bootstrap a new charter-worker instance directory"
+        description="Bootstrap a new steward instance directory"
     )
     parser.add_argument(
         "directory",
@@ -154,7 +154,7 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    print(f"Initialized charter-worker instance at {target}")
+    print(f"Initialized steward instance at {target}")
     if result["warnings"]:
         for w in result["warnings"]:
             print(f"  Warning: {w}")

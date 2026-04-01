@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hello World — minimal charter-worker task.
+"""Hello World — minimal steward task.
 
 Proves the task contract works with zero external dependencies:
 no email, no API keys, no codex.  Just Python.

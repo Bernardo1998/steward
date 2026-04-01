@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "charter-worker"
-version = "0.1.0"
-description = "A charter-driven project worker framework for proactive AI agents"
+name = "steward"
+version = "0.2.0"
+description = "Delegate work, not attention. Start with agents, crystallize into scripts."
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0",
@@ -16,14 +16,14 @@ email = ["markdown>=3.4", "weasyprint>=60.0"]
 all = ["markdown>=3.4", "weasyprint>=60.0"]
 
 [project.scripts]
-charter-orchestrator = "charter_worker.orchestrator:main"
-charter-init = "init_cmd:main"
-charter-status = "status_cmd:main"
-charter-promote = "charter_worker.promote:main"
-charter-add-task = "charter_worker.add_task:main"
+steward = "steward.orchestrator:main"
+steward-init = "init_cmd:main"
+steward-status = "status_cmd:main"
+steward-promote = "steward.promote:main"
+steward-add-task = "steward.add_task:main"
 
 [tool.setuptools.packages.find]
-include = ["charter_worker*"]
+include = ["steward*"]
 
 [tool.setuptools]
 py-modules = ["init_cmd", "status_cmd"]

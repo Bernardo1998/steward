@@ -14,7 +14,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from charter_worker.promote import (
+from steward.promote import (
     collect_promotion_data,
     analyze_promotion_readiness,
     generate_promoted_workflow,
@@ -294,7 +294,7 @@ class TestPromoteEndToEnd:
             "notes": "Simple pipeline task.",
         }
 
-        with patch("charter_worker.promote.call_llm_json", side_effect=[mock_analysis, mock_workflow]):
+        with patch("steward.promote.call_llm_json", side_effect=[mock_analysis, mock_workflow]):
             analysis = analyze_promotion_readiness(data)
             workflow = generate_promoted_workflow(data, analysis)
 
@@ -329,7 +329,7 @@ class TestPromoteEndToEnd:
             "rationale": "Every cycle does something different.",
         }
 
-        with patch("charter_worker.promote.call_llm_json", return_value=mock_analysis):
+        with patch("steward.promote.call_llm_json", return_value=mock_analysis):
             analysis = analyze_promotion_readiness(data)
 
         workflow = generate_promoted_workflow(data, analysis)
@@ -367,7 +367,7 @@ class TestPromotionFeedback:
         record_promotion_feedback(task_instance, "my_agent_task", "reject", "reason 1")
         record_promotion_feedback(task_instance, "my_agent_task", "reject", "reason 2")
 
-        from charter_worker.promote import load_promotion_state
+        from steward.promote import load_promotion_state
         promo = load_promotion_state(task_instance)
         history = promo["my_agent_task"]["feedback_history"]
         assert len(history) == 2

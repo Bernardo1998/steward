@@ -21,9 +21,9 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from charter_worker import orchestrator
-from charter_worker.runner import CycleRunner
-from charter_worker.actions import Action, ActionResult
+from steward import orchestrator
+from steward.runner import CycleRunner
+from steward.actions import Action, ActionResult
 
 
 # ---------------------------------------------------------------------------
@@ -37,10 +37,10 @@ import json, os, sys
 from datetime import datetime
 from pathlib import Path
 
-date = os.environ.get("CHARTER_RUN_DATE", datetime.now().strftime("%Y-%m-%d"))
-summary_dir = os.environ.get("CHARTER_SUMMARY_DIR")
+date = os.environ.get("STEWARD_RUN_DATE", datetime.now().strftime("%Y-%m-%d"))
+summary_dir = os.environ.get("STEWARD_SUMMARY_DIR")
 if not summary_dir:
-    root = os.environ.get("CHARTER_INSTANCE_ROOT", str(Path(__file__).parent.parent.parent))
+    root = os.environ.get("STEWARD_INSTANCE_ROOT", str(Path(__file__).parent.parent.parent))
     task_id = Path(__file__).parent.name
     summary_dir = f"{root}/daily_summaries/{date}/tasks/{task_id}"
 
@@ -123,7 +123,7 @@ def instance_dir():
         "task_id": "runner_task",
         "schedule": {"frequency": "daily", "max_runtime_minutes": 5},
         "execution": {"agent": "direct",
-                       "entrypoint": "python -m charter_worker.runner --definition definition.yaml --state state/"},
+                       "entrypoint": "python -m steward.runner --definition definition.yaml --state state/"},
         "report": {"digest": True},
     }
     with open(rt / "charter.yaml", "w") as f:
@@ -175,9 +175,9 @@ class TestDirectTaskProducesSummary:
         summary_dir = instance_dir / "daily_summaries" / date_str / "tasks" / "simple_task"
 
         env = os.environ.copy()
-        env["CHARTER_INSTANCE_ROOT"] = str(instance_dir)
-        env["CHARTER_RUN_DATE"] = date_str
-        env["CHARTER_SUMMARY_DIR"] = str(summary_dir)
+        env["STEWARD_INSTANCE_ROOT"] = str(instance_dir)
+        env["STEWARD_RUN_DATE"] = date_str
+        env["STEWARD_SUMMARY_DIR"] = str(summary_dir)
 
         result = subprocess.run(
             [sys.executable, "run.py"],
@@ -202,9 +202,9 @@ class TestDirectTaskProducesSummary:
         summary_dir = instance_dir / "daily_summaries" / date_str / "tasks" / "simple_task"
 
         env = os.environ.copy()
-        env["CHARTER_INSTANCE_ROOT"] = str(instance_dir)
-        env["CHARTER_RUN_DATE"] = date_str
-        env["CHARTER_SUMMARY_DIR"] = str(summary_dir)
+        env["STEWARD_INSTANCE_ROOT"] = str(instance_dir)
+        env["STEWARD_RUN_DATE"] = date_str
+        env["STEWARD_SUMMARY_DIR"] = str(summary_dir)
 
         subprocess.run(
             [sys.executable, "run.py"],
@@ -331,7 +331,7 @@ class TestDigestIncludesHealthReport:
         state = orchestrator.load_state()
         state["_reflection_report"] = "### Task Status\n\n| Task | Status |\n|------|--------|\n| simple_task | healthy |"
 
-        with patch("charter_worker.comm.email.send_email", return_value={"status": "sent"}):
+        with patch("steward.comm.email.send_email", return_value={"status": "sent"}):
             orchestrator.collect_and_send_digest(date_str, state)
 
         digest = (instance_dir / "daily_summaries" / date_str / "daily_digest.md").read_text()
@@ -414,7 +414,7 @@ class TestSelfHealingCycle:
             "fix_description": "Added missing import",
             "should_retry": True,
         }
-        with patch("charter_worker.llm.call_agent_write") as mock_agent:
+        with patch("steward.llm.call_agent_write") as mock_agent:
             mock_proc = MagicMock()
             mock_proc.stdout = json.dumps(mock_diagnosis)
             mock_proc.returncode = 0
@@ -475,8 +475,8 @@ class TestReflectionWithFixture:
             json.dump(orch_state, f)
 
         # Run reflection collector
-        from charter_worker.reflection.collector import collect_reflection_data
-        from charter_worker.reflection.report import generate_health_report
+        from steward.reflection.collector import collect_reflection_data
+        from steward.reflection.report import generate_health_report
 
         ctx = collect_reflection_data(instance_dir, date_str, lookback_days=7)
 
@@ -507,12 +507,12 @@ class TestReflectionWithFixture:
             json.dump({"task_runs": {"simple_task": {"last_success_date": date_str, "last_date": date_str}},
                         "diagnoses": {}}, f)
 
-        from charter_worker.reflection.state import update_failure_streaks
+        from steward.reflection.state import update_failure_streaks
 
         ctx_health = {"simple_task": {"days_failing": 0}}
         update_failure_streaks(instance_dir, ctx_health)
 
-        from charter_worker.reflection.state import load_reflection_state
+        from steward.reflection.state import load_reflection_state
         rstate = load_reflection_state(instance_dir)
         assert "failure_streaks" in rstate
 
@@ -557,7 +557,7 @@ class TestRunnerWithExperimentAction:
             "run_command": "python experiments/add_test.py",
             "expected_outputs": [],
         }
-        with patch("charter_worker.llm.call_llm_json", return_value=plan):
+        with patch("steward.llm.call_llm_json", return_value=plan):
             runner.run_cycle()
 
         sj = summary_dir / "summary.json"

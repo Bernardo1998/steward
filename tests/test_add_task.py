@@ -13,7 +13,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from charter_worker.add_task import (
+from steward.add_task import (
     classify_task,
     create_task,
     register_task,
@@ -62,7 +62,7 @@ class TestClassifyTask:
         }
 
         templates = ["hello_world", "ltt_thinker", "experiment_task"]
-        with patch("charter_worker.add_task.call_llm_json", return_value=mock_result):
+        with patch("steward.add_task.call_llm_json", return_value=mock_result):
             result = classify_task("Track new papers on LLM agent eval", templates)
 
         assert result["template"] == "ltt_thinker"
@@ -71,7 +71,7 @@ class TestClassifyTask:
 
     def test_handles_llm_failure(self):
         templates = ["hello_world"]
-        with patch("charter_worker.add_task.call_llm_json", side_effect=RuntimeError("LLM down")):
+        with patch("steward.add_task.call_llm_json", side_effect=RuntimeError("LLM down")):
             with pytest.raises(RuntimeError):
                 classify_task("Do something", templates)
 
@@ -234,7 +234,7 @@ class TestAddTaskEndToEnd:
             },
         }
 
-        with patch("charter_worker.add_task.call_llm_json", return_value=mock_classification):
+        with patch("steward.add_task.call_llm_json", return_value=mock_classification):
             classification = classify_task("Track my reading list", ["hello_world", "ltt_thinker"])
 
         task_path = create_task(instance_dir, classification)

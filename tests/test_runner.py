@@ -14,8 +14,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from charter_worker.actions import ActionResult, Action
-from charter_worker.runner import CycleRunner
+from steward.actions import ActionResult, Action
+from steward.runner import CycleRunner
 
 
 @pytest.fixture

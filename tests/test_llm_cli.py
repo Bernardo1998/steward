@@ -16,7 +16,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from charter_worker.llm import (
+from steward.llm import (
     build_agent_cmd,
     detect_provider,
     call_llm,
@@ -235,7 +235,7 @@ class TestCustomProvider:
             "workdir_flag": ["--dir"],
             "adddir_flag": ["--extra-dir"],
         })
-        with patch.dict(os.environ, {"CHARTER_LLM_CMD_TEMPLATE": template}):
+        with patch.dict(os.environ, {"STEWARD_LLM_CMD_TEMPLATE": template}):
             cmd, uses_stdin = build_agent_cmd(
                 mode="read_only", provider="my-llm",
             )
@@ -256,7 +256,7 @@ class TestCustomProvider:
                 "prompt_flag": "--prompt",
             },
         })
-        with patch.dict(os.environ, {"CHARTER_LLM_CMD_TEMPLATE": template}):
+        with patch.dict(os.environ, {"STEWARD_LLM_CMD_TEMPLATE": template}):
             cmd, uses_stdin = build_agent_cmd(
                 mode="write", provider="my-llm",
                 prompt="fix it",
@@ -274,7 +274,7 @@ class TestCustomProvider:
 
 class TestDetectProvider:
     def test_env_var_override(self):
-        with patch.dict(os.environ, {"CHARTER_LLM_CLI": "claude"}):
+        with patch.dict(os.environ, {"STEWARD_LLM_CLI": "claude"}):
             with patch("shutil.which", return_value="/usr/bin/claude"):
                 assert detect_provider() == "claude"
 
@@ -286,13 +286,13 @@ class TestDetectProvider:
                 return "/usr/bin/codex"
             return None
 
-        with patch.dict(os.environ, {"CHARTER_LLM_CLI": "nonexistent"}):
+        with patch.dict(os.environ, {"STEWARD_LLM_CLI": "nonexistent"}):
             with patch("shutil.which", side_effect=which_side_effect):
                 assert detect_provider() == "codex"
 
     def test_auto_detect_codex_first(self):
         with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("CHARTER_LLM_CLI", None)
+            os.environ.pop("STEWARD_LLM_CLI", None)
             with patch("shutil.which", return_value="/usr/bin/codex"):
                 assert detect_provider() == "codex"
 
@@ -303,13 +303,13 @@ class TestDetectProvider:
             return None
 
         with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("CHARTER_LLM_CLI", None)
+            os.environ.pop("STEWARD_LLM_CLI", None)
             with patch("shutil.which", side_effect=which_side_effect):
                 assert detect_provider() == "claude"
 
     def test_no_provider_raises(self):
         with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("CHARTER_LLM_CLI", None)
+            os.environ.pop("STEWARD_LLM_CLI", None)
             with patch("shutil.which", return_value=None):
                 with pytest.raises(RuntimeError, match="No CLI agent found"):
                     detect_provider()
@@ -329,7 +329,7 @@ class TestCallLlm:
         mock_proc.returncode = 0
         mock_proc.poll.return_value = 0
 
-        with patch("charter_worker.llm.detect_provider", return_value="codex"):
+        with patch("steward.llm.detect_provider", return_value="codex"):
             with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
                 result = call_llm("test prompt", provider="codex")
                 assert result == "result text"
@@ -345,7 +345,7 @@ class TestCallLlm:
         mock_proc.returncode = 0
         mock_proc.poll.return_value = 0
 
-        with patch("charter_worker.llm.detect_provider", return_value="claude"):
+        with patch("steward.llm.detect_provider", return_value="claude"):
             with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
                 result = call_llm("test prompt", provider="claude")
                 assert result == "result text"
