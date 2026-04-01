@@ -1,4 +1,4 @@
-"""Tests for charter-promote: workflow crystallizer."""
+"""Tests for steward-promote: workflow crystallizer."""
 
 import json
 import os

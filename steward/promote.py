@@ -1,4 +1,4 @@
-"""charter-promote — Workflow crystallizer.
+"""steward-promote — Workflow crystallizer.
 
 Analyzes an agent-mode task's execution history to identify which steps
 are deterministic (scriptable) vs. need LLM judgment, then generates
@@ -11,10 +11,10 @@ Primary flow (email-based, no CLI needed):
     4. Next reflection cycle reads reply and acts
 
 Manual override (CLI):
-    charter-promote <task_id> --last 5
-    charter-promote <task_id> --apply
-    charter-promote <task_id> --reject "reason"
-    charter-promote <task_id> --pause
+    steward-promote <task_id> --last 5
+    steward-promote <task_id> --apply
+    steward-promote <task_id> --reject "reason"
+    steward-promote <task_id> --pause
 """
 
 import argparse
@@ -339,7 +339,7 @@ def _build_not_ready_report(data: dict, analysis: dict) -> str:
     lines.append("")
     lines.append("## Recommendation")
     lines.append("")
-    lines.append("Keep running in agent mode. Re-run `charter-promote` after "
+    lines.append("Keep running in agent mode. Re-run `steward-promote` after "
                  "more cycles to check if behavior has stabilized.")
     return "\n".join(lines)
 
@@ -392,7 +392,7 @@ def _build_promotion_report(data: dict, analysis: dict, workflow: dict) -> str:
         "",
         "Review the generated files, then:",
         "```bash",
-        f"charter-promote {data['task_id']} --apply",
+        f"steward-promote {data['task_id']} --apply",
         "```",
     ])
 
@@ -692,7 +692,7 @@ def main():
         print(f"  run.py.generated      — candidate workflow", file=sys.stderr)
     if workflow.get("charter_yaml"):
         print(f"  charter.promoted.yaml — updated charter", file=sys.stderr)
-    print(f"\nTo apply: charter-promote {args.task_id} --apply", file=sys.stderr)
+    print(f"\nTo apply: steward-promote {args.task_id} --apply", file=sys.stderr)
 
 
 if __name__ == "__main__":

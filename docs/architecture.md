@@ -136,20 +136,20 @@ Once per day, a reflection pipeline analyzes the past 7 days:
 4. **Report** — generate health dashboard injected into the daily digest
 5. **Persist** — multi-day state: failure streaks, fix history, engagement trends
 
-See [charter_worker/proactive/reflection/DESIGN.md](../charter_worker/proactive/reflection/DESIGN.md).
+See [steward/reflection/DESIGN.md](../steward/reflection/DESIGN.md).
 
 ## CLI Provider Abstraction
 
 All LLM calls — task spawning, diagnosis, reflection analysis, durable fixes —
-go through a unified provider abstraction (`charter_worker/proactive/llm.py`).
+go through a unified provider abstraction (`steward/llm.py`).
 
 The provider is selected via:
 ```
-CHARTER_LLM_CLI env var  →  charter.yaml execution.agent  →  auto-detect
+STEWARD_LLM_CLI env var  →  charter.yaml execution.agent  →  auto-detect
 ```
 
 Built-in support for Codex and Claude Code. Custom CLIs (Gemini Code, OpenCode,
-etc.) supported via `CHARTER_LLM_CMD_TEMPLATE` env var. See README for details.
+etc.) supported via `STEWARD_LLM_CMD_TEMPLATE` env var. See README for details.
 
 ## Proactive Research Agent
 
@@ -166,10 +166,10 @@ etc.) supported via `CHARTER_LLM_CMD_TEMPLATE` env var. See README for details.
 ## Key Files
 
 ```
-charter-worker/                          # Framework
+steward/                          # Framework
   orchestrator.py                        # Main loop (hourly cron entry point)
   preflight.py                           # Constraint checker
-  charter_worker/
+  steward/
     proactive/llm.py                     # CLI-agnostic LLM abstraction
     proactive/reflection/                # Self-reflection system
     proactive/phase_*.py                 # 5-phase research cycle

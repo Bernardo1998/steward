@@ -10,7 +10,7 @@ The system assumes one human operator. There is no multi-user auth, shared
 state, or collaborative editing. The email feedback loop is 1:1.
 
 ### No web UI or dashboard
-Status is available via `charter-status` (CLI) and email digests. There is
+Status is available via `steward-status` (CLI) and email digests. There is
 no browser-based dashboard. A minimal `status.md` output exists but is not
 auto-served.
 
@@ -28,7 +28,7 @@ That is a research direction, not a shipped feature.
 Exploratory tasks require a CLI coding agent installed and authenticated.
 Built-in support for [Codex CLI](https://github.com/openai/codex) and
 [Claude Code](https://claude.ai/code). Custom CLIs (Gemini Code, OpenCode, etc.)
-are supported via `CHARTER_LLM_CMD_TEMPLATE` — see README for configuration.
+are supported via `STEWARD_LLM_CMD_TEMPLATE` — see README for configuration.
 The `hello_world` template avoids this dependency entirely.
 
 ### Email-only reporting

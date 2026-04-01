@@ -28,8 +28,8 @@ except ImportError:
     weasyprint = None
 
 def _get_config_path() -> Path:
-    """Resolve email config path: CHARTER_EMAIL_CONFIG env var, or instance root."""
-    env = os.environ.get("CHARTER_EMAIL_CONFIG")
+    """Resolve email config path: STEWARD_EMAIL_CONFIG env var, or instance root."""
+    env = os.environ.get("STEWARD_EMAIL_CONFIG")
     if env:
         return Path(env)
     from ..utils.helpers import get_instance_root

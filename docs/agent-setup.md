@@ -1,7 +1,7 @@
 # Agent Setup Guide
 
 You are an AI coding agent. Follow these steps exactly to set up a working
-charter-worker instance with a running hello_world task. Every command and
+steward instance with a running hello_world task. Every command and
 file content is given inline — execute them in order.
 
 ## Prerequisites
@@ -9,17 +9,17 @@ file content is given inline — execute them in order.
 - Python 3.10+
 - pip
 - git
-- The charter-worker repo cloned locally
+- The steward repo cloned locally
 
-## Step 1: Install charter-worker
+## Step 1: Install steward
 
 ```bash
-pip install -e /path/to/charter-worker/
+pip install -e /path/to/steward/
 ```
 
 Verify:
 ```bash
-python -c "import charter_worker; print('OK')"
+python -c "import steward; print('OK')"
 ```
 
 ## Step 2: Create an instance directory
@@ -49,7 +49,7 @@ mkdir -p tasks
 ## Step 4: Copy the hello_world task
 
 ```bash
-cp -r /path/to/charter-worker/templates/hello_world tasks/hello_world
+cp -r /path/to/steward/templates/hello_world tasks/hello_world
 ```
 
 If the template path is not available, create the files manually:
@@ -139,7 +139,7 @@ Expected output: `hello_world: N Python files, summary at ...`
 
 ```bash
 cd ~/my-charter-instance
-CHARTER_INSTANCE_ROOT=$(pwd) charter-orchestrator --force hello_world
+STEWARD_INSTANCE_ROOT=$(pwd) steward --force hello_world
 ```
 
 This spawns the task through the orchestrator, which manages locks, timeouts,
@@ -168,7 +168,7 @@ The instance is working. To add your own tasks:
 1. Create a new folder under `tasks/` with `charter.yaml` and either `run.py`
    (for `agent: direct`) or `task.md` (for `agent: codex` or `agent: claude`)
 2. Register it in `tasks/registry.yaml`
-3. Run: `charter-orchestrator --force <task_id>`
+3. Run: `steward --force <task_id>`
 
 See the [README](../README.md) for charter.yaml reference, email setup,
 cron automation, and the full module documentation.

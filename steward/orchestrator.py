@@ -8,9 +8,9 @@ sends daily digest.
 Does NOT import steward. Does NOT read task internals.
 
 Usage:
-    charter-orchestrator                         # one cycle (for cron)
-    charter-orchestrator --dry-run               # show what would run
-    charter-orchestrator --instance-dir /path    # explicit instance root
+    steward                         # one cycle (for cron)
+    steward --dry-run               # show what would run
+    steward --instance-dir /path    # explicit instance root
 """
 
 import argparse

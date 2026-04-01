@@ -48,7 +48,7 @@ are context exhaustion, budget limits, or total deadlock.
 3. **If `awaiting_feedback`** (initial plan phase only):
    - Check email for user reply:
      ```python
-     from charter_worker.proactive.gmail_reader import fetch_ltt_replies
+     from steward.proactive.gmail_reader import fetch_ltt_replies
      msgs = fetch_ltt_replies(subject_prefix="[MY-EXP]", since_date=state["last_email_date"])
      ```
    - Find the most recent message NOT from the bot. Do NOT match by message ID.
@@ -136,8 +136,8 @@ You are allowed exactly ONE outbound email per day. This is your daily report.
 Do NOT send emails mid-work. Accumulate everything and send at the end.
 
 ```python
-from charter_worker.comm.email import send_email
-from charter_worker.proactive.gmail_reader import fetch_ltt_replies
+from steward.comm.email import send_email
+from steward.proactive.gmail_reader import fetch_ltt_replies
 ```
 
 Subject prefix: `[MY-EXP]`

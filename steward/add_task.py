@@ -1,11 +1,11 @@
-"""charter-add-task — Natural-language task creation.
+"""steward-add-task — Natural-language task creation.
 
 Creates a new task from a plain English description, auto-selecting
 the right template, schedule, and execution mode.
 
 Usage:
-    charter-add-task "Send me a daily digest of new papers on LLM agent eval"
-    charter-add-task "Track my job applications" --schedule daily --mode agent
+    steward-add-task "Send me a daily digest of new papers on LLM agent eval"
+    steward-add-task "Track my job applications" --schedule daily --mode agent
 """
 
 import argparse
@@ -222,7 +222,7 @@ def main():
 
     templates = list_templates()
     if not templates:
-        print("Error: no templates found. Run charter-init first.", file=sys.stderr)
+        print("Error: no templates found. Run steward-init first.", file=sys.stderr)
         sys.exit(1)
 
     print(f"Classifying task...", file=sys.stderr)
@@ -254,9 +254,9 @@ def main():
     if (task_path / "task.md").exists():
         print(f"  task.md         — agent instructions", file=sys.stderr)
     print(f"\nTest it:", file=sys.stderr)
-    print(f"  charter-orchestrator --force {task_id}", file=sys.stderr)
+    print(f"  steward --force {task_id}", file=sys.stderr)
     print(f"\nWhen stable, promote to direct mode:", file=sys.stderr)
-    print(f"  charter-promote {task_id}", file=sys.stderr)
+    print(f"  steward-promote {task_id}", file=sys.stderr)
 
 
 if __name__ == "__main__":

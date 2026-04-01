@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""charter-status — Show the current state of all tasks in an instance.
+"""steward-status — Show the current state of all tasks in an instance.
 
 Reads registry, orchestrator state, lock files, and latest summaries
 to produce a human-readable status table.
 
 Usage:
-    charter-status
-    charter-status --instance-dir /path/to/my-tasks
-    charter-status --output status.md
-    charter-status --json
+    steward-status
+    steward-status --instance-dir /path/to/my-tasks
+    steward-status --output status.md
+    steward-status --json
 """
 
 import argparse

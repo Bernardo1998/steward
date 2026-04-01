@@ -1,4 +1,4 @@
-# Hello World — minimal charter-worker task
+# Hello World — minimal steward task
 #
 # Demonstrates the task contract with zero external dependencies.
 # No email, no API keys, no codex — just Python.

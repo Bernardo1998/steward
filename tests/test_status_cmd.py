@@ -1,4 +1,4 @@
-"""Tests for charter-status command."""
+"""Tests for steward-status command."""
 
 import json
 import shutil

@@ -1,6 +1,6 @@
 # Charter Worker Setup Guide — Linux Server
 
-This guide walks through installing charter-worker on a remote Linux server,
+This guide walks through installing steward on a remote Linux server,
 configuring it, and creating an experiment task that runs autonomously after
 you log off. Written so that a human or an AI agent can follow it end-to-end.
 
@@ -63,20 +63,20 @@ source ~/.bashrc
 
 ---
 
-## 3. Clone and install charter-worker
+## 3. Clone and install steward
 
 ```bash
 cd ~
-git clone https://github.com/Bernardo1998/charter-worker.git
-pip install -e ~/charter-worker/
+git clone https://github.com/Bernardo1998/steward.git
+pip install -e ~/steward/
 
 # Verify
-charter-orchestrator --help
+steward --help
 ```
 
 This installs:
-- `charter-orchestrator` CLI (the main loop)
-- `charter_worker` Python package (email, research, guardrails)
+- `steward` CLI (the main loop)
+- `steward` Python package (email, research, guardrails)
 - Dependencies: `pyyaml`
 - Optional: `pip install markdown weasyprint` (for HTML/PDF emails)
 
@@ -85,15 +85,15 @@ This installs:
 ## 4. Create an instance directory
 
 An "instance" is a directory where your tasks, state, and outputs live. It is
-separate from the charter-worker code so you can have multiple instances.
+separate from the steward code so you can have multiple instances.
 
 ```bash
 # Create instance
 mkdir -p ~/my-instance/tasks/_shared/state
 mkdir -p ~/my-instance/daily_summaries
 
-# Point charter-worker at it
-export CHARTER_INSTANCE_ROOT="$HOME/my-instance"
+# Point steward at it
+export STEWARD_INSTANCE_ROOT="$HOME/my-instance"
 ```
 
 ---
@@ -103,7 +103,7 @@ export CHARTER_INSTANCE_ROOT="$HOME/my-instance"
 The system sends you daily reports and task emails. You reply to give feedback.
 
 ```bash
-cp ~/charter-worker/templates/email_config.example.yaml ~/my-instance/email_config.yaml
+cp ~/steward/templates/email_config.example.yaml ~/my-instance/email_config.yaml
 ```
 
 Edit `~/my-instance/email_config.yaml`:
@@ -216,7 +216,7 @@ This is the instruction file the AI agent reads each cycle. Copy and customize
 the template:
 
 ```bash
-cp ~/charter-worker/templates/experiment_task/task.md \
+cp ~/steward/templates/experiment_task/task.md \
    ~/my-instance/tasks/my_experiment/task.md
 ```
 
@@ -270,21 +270,21 @@ cat > ~/my-instance/run.sh << 'SCRIPT'
 #!/bin/bash
 set -euo pipefail
 
-export CHARTER_INSTANCE_ROOT="$HOME/my-instance"
+export STEWARD_INSTANCE_ROOT="$HOME/my-instance"
 export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:$PATH"
 
 # Load nvm if installed (for codex)
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
-cd "$CHARTER_INSTANCE_ROOT"
+cd "$STEWARD_INSTANCE_ROOT"
 
 DATE=$(date +%Y-%m-%d)
 LOG_DIR="daily_summaries/${DATE}"
 mkdir -p "$LOG_DIR"
 
 echo "[$(date)] Starting orchestrator cycle..." >> "${LOG_DIR}/run.log"
-charter-orchestrator >> "${LOG_DIR}/run.log" 2>&1
+steward >> "${LOG_DIR}/run.log" 2>&1
 echo "[$(date)] Orchestrator cycle complete." >> "${LOG_DIR}/run.log"
 SCRIPT
 
@@ -354,8 +354,8 @@ tail -f ~/my-instance/daily_summaries/$(date +%Y-%m-%d)/run.log
 ### Dry run (shows what would happen without spawning anything)
 
 ```bash
-export CHARTER_INSTANCE_ROOT="$HOME/my-instance"
-charter-orchestrator --dry-run
+export STEWARD_INSTANCE_ROOT="$HOME/my-instance"
+steward --dry-run
 ```
 
 Expected output:
@@ -398,7 +398,7 @@ cat ~/my-instance/tasks/my_experiment/state/experiment_state.json
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ CRON (hourly)                                               │
-│   └─ charter-orchestrator                                   │
+│   └─ steward                                   │
 │        ├─ load state + registry                             │
 │        ├─ check for crashed tasks from last cycle           │
 │        │    └─ send failure email (dedup: 1/day)            │
@@ -525,7 +525,7 @@ Direct mode:  Python script → step1() → call_llm() → step3() → save_stat
 
 ### Making LLM calls from direct-mode tasks
 
-Use `call_llm_json()` from `charter_worker.proactive.llm` for structured output,
+Use `call_llm_json()` from `steward.llm` for structured output,
 or `call_llm()` for raw text. These automatically use whichever CLI provider is
 configured (codex, claude, or custom — see README for provider configuration).
 
@@ -540,9 +540,9 @@ from datetime import datetime
 # Setup paths
 TASK_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TASK_DIR.parent.parent
-os.environ.setdefault("CHARTER_INSTANCE_ROOT", str(REPO_ROOT))
+os.environ.setdefault("STEWARD_INSTANCE_ROOT", str(REPO_ROOT))
 
-from charter_worker.proactive.llm import call_llm_json
+from steward.llm import call_llm_json
 
 def load_state():
     """Pure Python — no LLM needed."""
@@ -609,12 +609,12 @@ if __name__ == "__main__":
 
 ### Reusable components for direct-mode tasks
 
-`charter_worker.proactive.*` modules provide pre-built phases:
+`steward.phases.*` modules provide pre-built phases:
 - `phase_research.research()` — web search + deep research
 - `phase_synthesize.synthesize()` — extract claims, update hypothesis
 - `phase_feedback.send_ltt_email()` — compose and send report
 - `comm.email.send_email()` — raw email send
-- `proactive.gmail_reader.fetch_ltt_replies()` — read email replies
+- `phases.gmail_reader.fetch_ltt_replies()` — read email replies
 
 All of these use `call_llm_json()` internally, so they automatically respect
 the configured CLI provider.
@@ -650,8 +650,8 @@ python3 -m json.tool ~/my-instance/tasks/my_experiment/state/experiment_state.js
 ### Force-run a task (ignoring schedule)
 
 ```bash
-export CHARTER_INSTANCE_ROOT="$HOME/my-instance"
-charter-orchestrator --force my_experiment
+export STEWARD_INSTANCE_ROOT="$HOME/my-instance"
+steward --force my_experiment
 ```
 
 ### Clear a stale lock
@@ -667,7 +667,7 @@ rm ~/my-instance/tasks/my_experiment/.lock
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `codex: command not found` | Node/npm not in cron PATH | Add to `run.sh`: `export NVM_DIR=...` and source nvm |
-| `No registry at ...` | Wrong `CHARTER_INSTANCE_ROOT` | Check the export in `run.sh` |
+| `No registry at ...` | Wrong `STEWARD_INSTANCE_ROOT` | Check the export in `run.sh` |
 | `Email config not found` | Missing `email_config.yaml` | Copy from template, fill in credentials |
 | `rate_limited` on email | Too many emails today | Wait; check `rate_limit` in email config |
 | Tasks crash with OOM | Too many concurrent agents | Stagger with `run_hour`; reduce deep_research `max_workers` |
@@ -679,11 +679,11 @@ rm ~/my-instance/tasks/my_experiment/.lock
 ## 15. File reference
 
 ```
-~/charter-worker/                    # Framework (git-tracked)
+~/steward/                    # Framework (git-tracked)
   orchestrator.py                    # Main loop (schedule, spawn, self-healing, digest)
   preflight.py                       # Constraint checker
   agent_loop.sh                      # Auto-resume wrapper
-  charter_worker/                    # Python package
+  steward/                    # Python package
     proactive/llm.py                 #   CLI-agnostic LLM abstraction (codex/claude/custom)
     proactive/reflection/            #   Self-reflection system (daily health analysis)
     proactive/phase_*.py             #   5-phase proactive research cycle
@@ -722,13 +722,13 @@ rm ~/my-instance/tasks/my_experiment/.lock
 [ ] Python 3.10+ installed
 [ ] Node.js 18+ installed
 [ ] CLI agent installed: codex, claude, or custom (set CHARTER_LLM_CLI if not codex)
-[ ] charter-worker cloned and pip installed
+[ ] steward cloned and pip installed
 [ ] Instance directory created
 [ ] email_config.yaml configured with Gmail App Password
 [ ] registry.yaml created with task entry
 [ ] Task folder created (charter.yaml, task.md, state/experiment_state.json)
 [ ] run.sh created and chmod +x
-[ ] Dry run passes: charter-orchestrator --dry-run
+[ ] Dry run passes: steward --dry-run
 [ ] First real run: task sends plan email
 [ ] Cron job added: 0 * * * * /bin/bash -l ~/my-instance/run.sh
 [ ] SSH logout test: task keeps running after disconnect

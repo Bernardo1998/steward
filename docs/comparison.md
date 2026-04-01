@@ -1,4 +1,4 @@
-# How charter-worker compares
+# How steward compares
 
 ## vs OpenClaw / persistent autonomous agents
 
@@ -49,7 +49,7 @@ What it adds over plain cron:
 - **Email digest**: collects all results into a single daily email
 - **Workflow promotion**: tasks can graduate from expensive agent mode to cheap scripts
 
-## What charter-worker is NOT
+## What steward is NOT
 
 - Not a web product or SaaS
 - Not a replacement for Airflow/Prefect for production data pipelines

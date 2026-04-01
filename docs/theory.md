@@ -54,7 +54,7 @@ conflicting evidence, or creative exploration, richer agent structures (debate, 
 iterative refinement) may be justified — but only if the added coordination channels
 carry genuinely useful information.
 
-## The architecture: charter-worker as testbed
+## The architecture: steward as testbed
 
 Charter-worker's design reflects these principles pragmatically:
 
@@ -98,12 +98,12 @@ single-agent and multi-agent modes based on measured task properties.
 The roadmap to make the theory operational:
 
 1. **Instrument** — Measure coordination costs (handoff tokens, context loss,
-   error propagation) in charter-worker's own operation
+   error propagation) in steward's own operation
 2. **Decide** — Implement the Coasean boundary rule as a runtime architecture
    selector: only decompose when measured gains exceed measured costs
 3. **Optimize** — Let the system learn its own optimal boundaries from operational data
 4. **Validate** — Show that the theory predicts the right architecture for new tasks
 
 The controlled experiment (arms A-D) validates the theory externally. Instrumenting
-charter-worker itself would validate it internally. Both together make the strongest
+steward itself would validate it internally. Both together make the strongest
 possible case.

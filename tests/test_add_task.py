@@ -1,4 +1,4 @@
-"""Tests for charter-add-task: natural-language task creation."""
+"""Tests for steward-add-task: natural-language task creation."""
 
 import json
 import os

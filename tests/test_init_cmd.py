@@ -1,4 +1,4 @@
-"""Tests for charter-init bootstrap command."""
+"""Tests for steward-init bootstrap command."""
 
 import json
 import os
@@ -91,7 +91,7 @@ class TestInitInstance:
 
         run_sh = target / "run.sh"
         assert run_sh.is_file()
-        assert "charter-orchestrator" in run_sh.read_text()
+        assert "steward" in run_sh.read_text()
         # Check executable permission
         assert os.access(run_sh, os.X_OK)
 

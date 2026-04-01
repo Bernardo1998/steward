@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""charter-init — Bootstrap a new steward instance directory.
+"""steward-init — Bootstrap a new steward instance directory.
 
 Creates the instance structure, copies a template task, and sets up
 .gitignore and registry so the user can immediately run:
 
-    charter-orchestrator --force hello_world
+    steward --force hello_world
 
 Usage:
-    charter-init <directory>
-    charter-init <directory> --template ltt_thinker
-    charter-init <directory> --list-templates
+    steward-init <directory>
+    steward-init <directory> --template ltt_thinker
+    steward-init <directory> --list-templates
 """
 
 import argparse
@@ -104,7 +104,7 @@ def init_instance(target: Path, template: str = "hello_world") -> dict:
     if not run_sh.exists():
         run_sh.write_text(
             '#!/bin/bash\nset -e\ncd "$(dirname "$0")"\n'
-            'STEWARD_INSTANCE_ROOT="$(pwd)" charter-orchestrator\n'
+            'STEWARD_INSTANCE_ROOT="$(pwd)" steward\n'
         )
         run_sh.chmod(0o755)
         result["copied_files"].append(str(run_sh))
@@ -160,7 +160,7 @@ def main():
             print(f"  Warning: {w}")
     print(f"\nNext steps:")
     print(f"  cd {target}")
-    print(f"  charter-orchestrator --force {args.template}")
+    print(f"  steward --force {args.template}")
     return 0
 
 
