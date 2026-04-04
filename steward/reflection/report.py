@@ -58,6 +58,24 @@ def generate_health_report(
         sections.extend(rows)
         sections.append("")
 
+    # --- Output Assessment ---
+    output_assessments = ctx.get("output_assessments", [])
+    if output_assessments:
+        flagged = [a for a in output_assessments if not a.has_meaningful_output]
+        stale = [a for a in output_assessments if a.is_stale and a.has_meaningful_output]
+        if flagged or stale:
+            sections.append("### Output Quality Assessment\n")
+            for a in flagged:
+                conf = f" ({a.confidence})" if a.confidence != "high" else ""
+                sections.append(
+                    f"- **{a.task_id}**: No meaningful output{conf} — {a.evidence[:150]}"
+                )
+                if a.apparent_issue:
+                    sections.append(f"  - Suspected: {a.apparent_issue[:150]}")
+            for a in stale:
+                sections.append(f"- **{a.task_id}**: Stale — {a.evidence[:150]}")
+            sections.append("")
+
     # --- Failure Patterns ---
     actionable_patterns = [p for p in failure_patterns if p.get("root_cause")]
     if actionable_patterns:

@@ -407,6 +407,56 @@ class TestReport:
         assert data["status"] == "failed"  # single failed action = overall failed
         assert len(data["errors"]) > 0
 
+    def test_neutral_skip_does_not_degrade_summary(self, task_dir):
+        runner = CycleRunner(
+            definition=task_dir / "definition.yaml",
+            state_dir=task_dir / "state",
+            summary_dir=task_dir / "summaries",
+        )
+        context = runner.load_state()
+        results = [
+            ActionResult(
+                action_type="bootstrap_check", status="skipped",
+                summary="Nothing to do yet", findings=[], artifacts=[],
+                duration_s=0.0,
+            ),
+            ActionResult(
+                action_type="web_search", status="success",
+                summary="Found 3 papers on X", findings=[], artifacts=[],
+                duration_s=10.0,
+            ),
+        ]
+
+        runner.report(context, results)
+        data = json.loads((task_dir / "summaries" / "summary.json").read_text())
+        assert data["status"] == "success"
+        assert data["action_results"][0]["blocking"] is False
+
+    def test_blocking_skip_still_degrades_summary(self, task_dir):
+        runner = CycleRunner(
+            definition=task_dir / "definition.yaml",
+            state_dir=task_dir / "state",
+            summary_dir=task_dir / "summaries",
+        )
+        context = runner.load_state()
+        results = [
+            ActionResult(
+                action_type="manual_gate", status="skipped",
+                summary="Waiting on required input", findings=[], artifacts=[],
+                duration_s=0.0, metadata={"blocking": True},
+            ),
+            ActionResult(
+                action_type="web_search", status="success",
+                summary="Found 3 papers on X", findings=[], artifacts=[],
+                duration_s=10.0,
+            ),
+        ]
+
+        runner.report(context, results)
+        data = json.loads((task_dir / "summaries" / "summary.json").read_text())
+        assert data["status"] == "partial"
+        assert data["action_results"][0]["blocking"] is True
+
 
 # ---------------------------------------------------------------------------
 # Phase 6: save_state

@@ -270,6 +270,40 @@ class CycleRunner:
     # Phase 5: Report
     # ------------------------------------------------------------------
 
+    def _skip_is_neutral(self, result: ActionResult) -> bool:
+        """Treat skipped results as neutral unless explicitly marked blocking."""
+        if result.status != "skipped":
+            return False
+
+        metadata = result.metadata or {}
+        if "blocking" in metadata:
+            return not bool(metadata["blocking"])
+        if "optional" in metadata:
+            return bool(metadata["optional"])
+        return True
+
+    def _overall_status(self, results: list[ActionResult]) -> str:
+        """Roll up action results into one task status."""
+        statuses = [
+            r.status for r in results
+            if not self._skip_is_neutral(r)
+        ]
+        if all(s == "success" for s in statuses):
+            return "success"
+        if all(s in ("failed", "skipped") for s in statuses):
+            return "failed"
+        return "partial"
+
+    def _action_result_record(self, result: ActionResult) -> dict:
+        """Serialize one action result for summary.json."""
+        record = {
+            "action_type": result.action_type,
+            "status": result.status,
+        }
+        if result.status == "skipped":
+            record["blocking"] = not self._skip_is_neutral(result)
+        return record
+
     def report(self, context: dict, results: list[ActionResult]):
         """Write summary.md + summary.json for the orchestrator digest."""
         self.summary_dir.mkdir(parents=True, exist_ok=True)
@@ -277,13 +311,7 @@ class CycleRunner:
         started_at = context.get("_started_at", datetime.now().isoformat())
 
         # Determine overall status
-        statuses = [r.status for r in results]
-        if all(s == "success" for s in statuses):
-            overall = "success"
-        elif all(s in ("failed", "skipped") for s in statuses):
-            overall = "failed"
-        else:
-            overall = "partial"
+        overall = self._overall_status(results)
 
         # Collect
         all_findings = []
@@ -310,6 +338,10 @@ class CycleRunner:
             "action_items": [],
             "artifacts": all_artifacts,
             "errors": all_errors,
+            "action_results": [
+                self._action_result_record(r)
+                for r in results
+            ],
             "metadata": {
                 "started_at": started_at,
                 "ended_at": datetime.now().isoformat(),

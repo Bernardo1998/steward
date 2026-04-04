@@ -1028,8 +1028,17 @@ def main():
         max_rt = t["charter"].get("schedule", {}).get("max_runtime_minutes", 60)
         task_id = t["id"]
 
-        if max_rt <= args.sync_wait_threshold:
-            print(f"  [orch] Waiting for {task_id} (max {max_rt} min)...", file=sys.stderr)
+        exec_cfg = t["charter"].get("execution", {})
+        force_sync_wait = bool(exec_cfg.get("sync_wait", False))
+        should_wait_sync = force_sync_wait or max_rt <= args.sync_wait_threshold
+
+        if should_wait_sync:
+            wait_reason = (
+                "sync_wait override"
+                if force_sync_wait and max_rt > args.sync_wait_threshold
+                else f"max {max_rt} min"
+            )
+            print(f"  [orch] Waiting for {task_id} ({wait_reason})...", file=sys.stderr)
             try:
                 t["proc"].wait(timeout=max_rt * 60)
                 exit_code = t["proc"].returncode
@@ -1163,25 +1172,50 @@ def main():
               f"{[t['id'] for t in completeness_spawned]}", file=sys.stderr)
 
     # -----------------------------------------------------------------------
-    # Daily reflection: proactive self-improvement (runs once at 4 AM)
+    # Daily reflection: persistent loop until all tasks have meaningful output
     # -----------------------------------------------------------------------
     REFLECTION_HOUR = args.reflection_hour
-    reflection_ran = state.get("last_reflection_date") == date_str
+    reflect_resolved = state.get("reflect_resolved_date") == date_str
 
-    if not reflection_ran and now.hour >= REFLECTION_HOUR:
-        print(f"\n[orch] Running daily reflection for {date_str}...", file=sys.stderr)
+    if not reflect_resolved and now.hour >= REFLECTION_HOUR:
         try:
-            from steward.reflection.pipeline import run_reflection
-            reflection_result = run_reflection(REPO_ROOT, date_str, state)
-            state["last_reflection_date"] = date_str
-            state["last_reflection_time"] = now.isoformat()
-            state["_reflection_report"] = reflection_result.get("health_report_md", "")
+            from steward.reflection.pipeline import run_detect, run_reflection
+
+            # Cheap detect pass first — is reflection needed?
+            detect_result = run_detect(REPO_ROOT, date_str)
+
+            if detect_result["all_resolved"]:
+                # All tasks have meaningful output — mark resolved for today
+                state["reflect_resolved_date"] = date_str
+                state["last_reflection_time"] = now.isoformat()
+                if detect_result.get("health_report_md"):
+                    state["_reflection_report"] = detect_result["health_report_md"]
+                print(f"  [orch] All tasks have meaningful output, reflection resolved",
+                      file=sys.stderr)
+            else:
+                # Unresolved tasks — run full reflection (detect + fix + re-run + re-assess)
+                unresolved = detect_result["unresolved"]
+                print(f"\n[orch] Reflection: {len(unresolved)} task(s) without meaningful output: "
+                      f"{unresolved}", file=sys.stderr)
+
+                reflection_result = run_reflection(REPO_ROOT, date_str, state)
+                state["last_reflection_time"] = now.isoformat()
+                state["_reflection_report"] = reflection_result.get("health_report_md", "")
+
+                if reflection_result.get("all_resolved"):
+                    state["reflect_resolved_date"] = date_str
+                    print(f"  [orch] All tasks resolved after reflection", file=sys.stderr)
+                else:
+                    still_broken = reflection_result.get("unresolved", [])
+                    print(f"  [orch] {len(still_broken)} task(s) still unresolved: "
+                          f"{still_broken} — will retry next hour", file=sys.stderr)
+
         except Exception as e:
             print(f"  [orch] Reflection failed: {e}", file=sys.stderr)
             import traceback
             traceback.print_exc(file=sys.stderr)
             state["_reflection_report"] = f"*Reflection failed: {e}*"
-    elif not reflection_ran:
+    elif not reflect_resolved:
         print(f"  [orch] Reflection deferred until {REFLECTION_HOUR}:00 (now {now.hour}:00)",
               file=sys.stderr)
 

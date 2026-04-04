@@ -88,40 +88,39 @@ def _spawn_durable_fix_agent(
     task_dir = instance_root / task_path
     health = task_health.get(task_id, {})
 
-    # Build enriched prompt
+    # Build enriched prompt with output assessment evidence
+    evidence = pattern.get("evidence", "")
+    apparent_issue = pattern.get("root_cause", "No root cause identified")
+    is_stale = pattern.get("is_stale", False)
+
     prompt = f"""\
-You are the orchestrator's DURABLE FIX agent. Unlike the reactive diagnosis
-system that patches crashes on the day they happen, your job is to find and
-fix the DEEPER root cause of a persistent failure pattern.
+You are the orchestrator's DURABLE FIX agent. A task failed to produce
+meaningful output for the user today. Your job: find the root cause and fix it.
 
 TASK: {task_id}
 PATH: {task_path}
-DAYS FAILING: {health.get('days_failing', '?')}
-SUCCESS RATE (7 days): {health.get('success_rate_7d', '?')}
 
-ROOT CAUSE ANALYSIS:
-{pattern.get('root_cause', 'No root cause identified')}
+WHAT THE OUTPUT ASSESSMENT FOUND:
+  Issue: {apparent_issue}
+  Evidence: {evidence}
+  Stale output: {is_stale}
 
-SUGGESTED DURABLE FIX:
-{pattern.get('durable_fix_suggestion', 'No specific fix suggested')}
+STRUCTURED HEALTH DATA (supplementary):
+  Days failing: {health.get('days_failing', '?')}
+  Success rate (7d): {health.get('success_rate_7d', '?')}
 
-WHY PREVIOUS FIXES DIDN'T STICK:
-{pattern.get('prior_fixes_ineffective_because', 'Unknown')}
-
-PRIOR FIXES THAT WERE TRIED AND FAILED:
+PRIOR FIXES THAT WERE TRIED:
 {json.dumps(pattern.get('prior_fixes_tried', []), indent=2)}
 
 DIAGNOSIS HISTORY (most recent 5):
 {json.dumps(health.get('diagnosis_history', [])[-5:], indent=2)}
 
-LOG TAIL (last 2000 chars):
-{health.get('log_tail', '(no log)')[-2000:]}
-
 YOUR JOB:
 1. Read the task code (run.py, task.md, charter.yaml, config/) thoroughly
-2. Apply a DURABLE fix that addresses the root cause, not just today's symptom
-3. Consider: would this fix survive a different day/schedule/project rotation?
-4. After fixing, verify with a quick sanity check (e.g., python -c "import run")
+2. Check state files and logs for clues (state/, exploration_log.jsonl, etc.)
+3. Find the root cause — often a timeout config, swallowed exception, or
+   state bootstrap issue rather than a code bug
+4. Apply a DURABLE fix. Verify with a quick sanity check.
 5. You have write access to files under {task_dir}
 
 Output EXACTLY one JSON block (fenced with ```json ... ```) with:
@@ -260,8 +259,8 @@ def execute_reflection_actions(
                 break
 
             health = task_health.get(task_id, {})
-            if health.get("days_failing", 0) < 3:
-                continue
+            # No days_failing threshold — the output assessor already decided
+            # this task needs fixing. Only G11 (regression check) can block.
 
             # G11: Check for fix regression
             fix_history = health.get("fix_history", [])

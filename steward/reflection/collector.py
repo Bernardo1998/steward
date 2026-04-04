@@ -97,11 +97,22 @@ def _collect_task_health(
         if summary:
             status = summary.get("status", "unknown")
             statuses.append({"date": date, "status": status})
-            if status == "failed":
+            if status in ("failed", "partial"):
                 for err in summary.get("errors", []):
                     errors_collected.append({
                         "date": date,
                         "message": err.get("message", str(err))[:200],
+                    })
+                # Flag "partial with no errors" as silent degradation
+                if status == "partial" and not summary.get("errors"):
+                    skipped_actions = [
+                        a["action_type"] for a in summary.get("action_results", [])
+                        if a.get("status") == "skipped"
+                    ]
+                    detail = f"skipped: {', '.join(skipped_actions)}" if skipped_actions else "no errors reported"
+                    errors_collected.append({
+                        "date": date,
+                        "message": f"Silent degradation: status=partial but {detail}",
                     })
             dur = summary.get("metadata", {}).get("duration_s")
             if dur is not None:
@@ -181,6 +192,9 @@ def _collect_task_health(
             except OSError:
                 pass
 
+    # Detect tasks that have never succeeded (0% success with 2+ attempts)
+    never_succeeded = successes == 0 and attempts >= 2
+
     return {
         "task_id": task_id,
         "last_success_date": last_success,
@@ -189,6 +203,7 @@ def _collect_task_health(
         "success_rate_7d": round(success_rate, 2),
         "successes_7d": successes,
         "attempts_7d": attempts,
+        "never_succeeded": never_succeeded,
         "statuses": statuses,
         "errors": errors_collected,
         "diagnosis_history": diag_history,

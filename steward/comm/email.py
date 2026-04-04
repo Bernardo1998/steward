@@ -13,6 +13,7 @@ from datetime import datetime, date
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import make_msgid
 from pathlib import Path
 
 import yaml
@@ -44,6 +45,16 @@ def _get_state_dir() -> Path:
 
 def _get_send_log() -> Path:
     return _get_state_dir() / "email_send_log.jsonl"
+
+
+def _make_message_id(sender_address: str) -> str:
+    """Generate a Message-ID using the sender domain when available."""
+    domain = "ltt.timemanagement.local"
+    if "@" in sender_address:
+        sender_domain = sender_address.split("@", 1)[1].strip()
+        if sender_domain:
+            domain = sender_domain
+    return make_msgid(domain=domain)
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +199,7 @@ def send_email(
 
     Returns:
         {"status": "sent"|"rate_limited"|"error"|"disabled"|"dry_run",
-         "recipient": "...", "error": "..."}
+         "recipient": "...", "error": "...", "message_id": "..."}
     """
     try:
         cfg = _load_email_config()
@@ -206,6 +217,8 @@ def send_email(
             "error": f"recipient_index {recipient_index} out of range (allowlist has {len(allowlist)} entries)",
         }
     recipient = allowlist[recipient_index]
+    sender = cfg["sender"]
+    message_id = _make_message_id(sender["address"])
 
     if dry_run:
         return {
@@ -214,6 +227,7 @@ def send_email(
             "subject": subject,
             "body_preview": body_markdown[:500],
             "attachments": [name for name, _ in (attachments or [])],
+            "message_id": message_id,
         }
 
     if not _check_rate_limit(cfg):
@@ -221,11 +235,11 @@ def send_email(
         return {"status": "rate_limited", "recipient": recipient, "error": "Daily rate limit or cooldown reached"}
 
     # Build multipart message
-    sender = cfg["sender"]
     msg = MIMEMultipart("mixed")
     msg["From"] = sender["address"]
     msg["To"] = recipient
     msg["Subject"] = subject
+    msg["Message-ID"] = message_id
 
     # Body: plain text + HTML alternative
     body_part = MIMEMultipart("alternative")
@@ -247,7 +261,7 @@ def send_email(
             server.login(sender["address"], sender["app_password"])
             server.sendmail(sender["address"], [recipient], msg.as_string())
         _log_send(recipient, subject, "sent")
-        return {"status": "sent", "recipient": recipient}
+        return {"status": "sent", "recipient": recipient, "message_id": message_id}
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         _log_send(recipient, subject, "error", error=error_msg)
