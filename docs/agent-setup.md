@@ -25,8 +25,8 @@ python -c "import steward; print('OK')"
 ## Step 2: Create an instance directory
 
 ```bash
-mkdir -p ~/my-charter-instance
-cd ~/my-charter-instance
+mkdir -p ~/my-steward-instance
+cd ~/my-steward-instance
 git init
 ```
 
@@ -129,7 +129,7 @@ mkdir -p tasks/hello_world/state
 ## Step 5: Run the task directly
 
 ```bash
-cd ~/my-charter-instance/tasks/hello_world
+cd ~/my-steward-instance/tasks/hello_world
 python run.py
 ```
 
@@ -138,7 +138,7 @@ Expected output: `hello_world: N Python files, summary at ...`
 ## Step 6: Run via the orchestrator
 
 ```bash
-cd ~/my-charter-instance
+cd ~/my-steward-instance
 STEWARD_INSTANCE_ROOT=$(pwd) steward --force hello_world
 ```
 

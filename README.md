@@ -222,7 +222,6 @@ corrections, new priorities, pause/resume. The email layer is modular
 | [docs/workflow-promotion.md](docs/workflow-promotion.md) | Agent → direct promotion guide |
 | [docs/agent-setup.md](docs/agent-setup.md) | AI agent bootstrapping instructions |
 | [docs/comparison.md](docs/comparison.md) | vs OpenClaw, autoresearch, Airflow |
-| [ROADMAP.md](ROADMAP.md) | What works now and what's next |
 
 ---
 

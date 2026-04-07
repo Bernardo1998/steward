@@ -28,3 +28,12 @@ email_config.yaml
 **/google_credentials.json
 **/google_token.json
 research_output/
+
+# Personal dev notes (kept locally, never committed)
+DELEGATE_VS_CRYSTAL.md
+GITHUB_ATTRACT.md
+REFACTOR_PLAN.md
+ROADMAP.md
+TASK_CREATION.md
+TASK_CREATION_IMPL.md
+TEST_INTEGRATION_PLAN.md

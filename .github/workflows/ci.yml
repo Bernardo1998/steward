@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 jobs:
   test:
@@ -26,9 +26,9 @@ jobs:
 
       - name: Import check
         run: |
-          python -c "import charter_worker"
-          python -c "from charter_worker.proactive.guardrails import g8_structural_check"
-          python -c "from charter_worker.research.engine import run_research"
+          python -c "import steward"
+          python -c "from steward.phases.guardrails import g8_structural_check"
+          python -c "from steward.search.engine import run_research"
           python -c "from init_cmd import init_instance, list_templates"
           python -c "from status_cmd import collect_status, format_table"
 
@@ -43,9 +43,9 @@ jobs:
           test -f ../../daily_summaries/*/tasks/hello_world/summary.json
           test -f ../../daily_summaries/*/tasks/hello_world/summary.md
 
-      - name: Test charter-init bootstrap
+      - name: Test steward-init bootstrap
         run: |
-          charter-init /tmp/ci-test-instance
+          steward-init /tmp/ci-test-instance
           test -f /tmp/ci-test-instance/tasks/registry.yaml
           test -f /tmp/ci-test-instance/tasks/hello_world/charter.yaml
           test -f /tmp/ci-test-instance/.gitignore
