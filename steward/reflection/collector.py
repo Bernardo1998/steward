@@ -99,9 +99,14 @@ def _collect_task_health(
             statuses.append({"date": date, "status": status})
             if status in ("failed", "partial"):
                 for err in summary.get("errors", []):
+                    # Tasks may write errors as dicts or as plain strings
+                    if isinstance(err, dict):
+                        message = err.get("message", str(err))
+                    else:
+                        message = str(err)
                     errors_collected.append({
                         "date": date,
-                        "message": err.get("message", str(err))[:200],
+                        "message": message[:200],
                     })
                 # Flag "partial with no errors" as silent degradation
                 if status == "partial" and not summary.get("errors"):

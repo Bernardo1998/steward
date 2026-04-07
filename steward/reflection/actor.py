@@ -80,55 +80,61 @@ def _spawn_durable_fix_agent(
     pattern: dict,
     task_health: dict,
 ) -> dict:
-    """Spawn a Claude Code agent to apply a durable fix.
+    """Spawn a Claude Code agent to apply a targeted fix.
 
-    Unlike reactive diagnosis (which sees only today's crash), this agent
-    gets the full multi-day failure history and prior fix descriptions.
+    Uses programmatic diagnosis (diagnoser.py) to give the agent a focused
+    starting point instead of making it explore the codebase from scratch.
     """
+    from datetime import datetime
+    from .diagnoser import diagnose_task, format_diagnosis_for_prompt
+
     task_dir = instance_root / task_path
     health = task_health.get(task_id, {})
 
-    # Build enriched prompt with output assessment evidence
-    evidence = pattern.get("evidence", "")
-    apparent_issue = pattern.get("root_cause", "No root cause identified")
-    is_stale = pattern.get("is_stale", False)
+    # Programmatic diagnosis — gather symptoms WITHOUT LLM exploration
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    diagnosis = diagnose_task(
+        instance_root=instance_root,
+        task_id=task_id,
+        task_path=task_path,
+        apparent_issue=pattern.get("root_cause", "No root cause identified"),
+        is_stale=pattern.get("is_stale", False),
+        date_str=date_str,
+    )
+    diagnosis_block = format_diagnosis_for_prompt(diagnosis)
 
     prompt = f"""\
-You are the orchestrator's DURABLE FIX agent. A task failed to produce
-meaningful output for the user today. Your job: find the root cause and fix it.
+You are the orchestrator's TARGETED FIX agent. A task failed to produce
+meaningful output today. The diagnosis below tells you exactly what to look at —
+do NOT re-explore the entire codebase.
 
 TASK: {task_id}
 PATH: {task_path}
 
-WHAT THE OUTPUT ASSESSMENT FOUND:
-  Issue: {apparent_issue}
-  Evidence: {evidence}
-  Stale output: {is_stale}
+OUTPUT ASSESSOR EVIDENCE:
+  {pattern.get("evidence", "")}
 
-STRUCTURED HEALTH DATA (supplementary):
-  Days failing: {health.get('days_failing', '?')}
-  Success rate (7d): {health.get('success_rate_7d', '?')}
-
-PRIOR FIXES THAT WERE TRIED:
-{json.dumps(pattern.get('prior_fixes_tried', []), indent=2)}
-
-DIAGNOSIS HISTORY (most recent 5):
-{json.dumps(health.get('diagnosis_history', [])[-5:], indent=2)}
+{diagnosis_block}
 
 YOUR JOB:
-1. Read the task code (run.py, task.md, charter.yaml, config/) thoroughly
-2. Check state files and logs for clues (state/, exploration_log.jsonl, etc.)
-3. Find the root cause — often a timeout config, swallowed exception, or
-   state bootstrap issue rather than a code bug
-4. Apply a DURABLE fix. Verify with a quick sanity check.
-5. You have write access to files under {task_dir}
+1. Read ONLY the files listed in "START WITH THESE FILES" above
+2. Use the symptoms, log signals, and state anomalies as your starting point
+3. If prior fix attempts are listed, do NOT repeat them — try a different angle
+4. Apply a targeted, minimal fix
+5. Verify with a quick sanity check (e.g., python -c "import run")
+6. You have write access to files under {task_dir}
+
+DO NOT:
+- grep the whole codebase
+- read every file in the task directory
+- ignore the prior diagnoses (the symptoms repeat across attempts)
 
 Output EXACTLY one JSON block (fenced with ```json ... ```) with:
 ```json
 {{
-  "diagnosis": "What you found as the deeper root cause",
+  "diagnosis": "What you found as the root cause (be specific)",
   "fix_applied": true,
-  "fix_description": "What you changed and why it's durable",
+  "fix_description": "What you changed and why",
   "files_modified": ["list of files changed"],
   "confidence": "high|medium|low"
 }}
