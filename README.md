@@ -132,6 +132,33 @@ something is wrong, that's what Steward is for.
 
 ---
 
+## Why not OpenClaw or other autonomous agents?
+
+OpenClaw and similar autonomous agents run continuously, making decisions
+inside the agent's reasoning loop. Steward inverts this: **the workflow is
+consolidated into a script you can read and edit, not buried in an agent
+transcript.**
+
+- **Direct control.** When `paper_reader` scores candidates, the logic
+  lives in `tasks/paper_reader/scripts/score_candidates.py` — open it,
+  tweak a threshold, ship. With an autonomous agent, you adjust prompts
+  and hope.
+- **Amortized cost.** Autonomous agents pay full LLM cost on every cycle
+  forever. Steward tasks start in agent mode, then `steward-promote`
+  crystallizes the stable parts into cheap Python — LLM only stays where
+  judgment is actually needed.
+- **Debugging is `git diff`, not transcript review.** When something
+  breaks, you read the changed code and the failed step's error — not a
+  200-line reasoning trace.
+- **Changes are version-controlled.** Every task lives in a git repo.
+  Your automation history is a commit log, not an agent memory file.
+
+If you want a fully autonomous decision-maker that handles novel
+situations, use OpenClaw. If you want background workers whose logic you
+can read, edit, grep, and version-control, use Steward.
+
+---
+
 ## How It Differs
 
 Steward is not another always-on agent or cron wrapper. The key difference:
