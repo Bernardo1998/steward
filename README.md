@@ -73,8 +73,18 @@ steward-add-task "Monitor competitor releases and alert me on changes"
 
 ## CLI Agent Support
 
-Steward is **CLI-agent agnostic**. The same task runs on Codex, Claude Code,
-Gemini Code, OpenCode, or any custom CLI without code changes.
+Steward is **CLI-agent agnostic at every layer**. The same provider
+abstraction governs three places where LLMs run:
+
+1. **Task execution** — when the orchestrator spawns a task in agent mode
+2. **Self-healing** — when the reflector spawns a fix agent for a broken task
+3. **In-task LLM calls** — when your task code does deep research, web search,
+   scoring, or any other LLM step via `steward.llm.call_llm()`
+
+Setting `STEWARD_LLM_CLI=claude` switches **all three** atomically. Your
+task's deep research engine starts using Claude Code; the reflector's fix
+agents start using Claude Code; new task spawns use Claude Code. No code
+changes anywhere.
 
 | Provider | Set as default |
 |----------|----------------|
@@ -85,11 +95,40 @@ Gemini Code, OpenCode, or any custom CLI without code changes.
 Auto-detected if not set. Per-task override in `charter.yaml`:
 ```yaml
 execution:
-  agent: "claude"    # this task always uses Claude Code
+  agent: "claude"    # this task always uses Claude Code, even if global default is codex
 ```
 
 Custom CLI template via `STEWARD_LLM_CMD_TEMPLATE` env var — see
 [docs/architecture.md](docs/architecture.md) for details.
+
+**Why this matters**: as CLI tools and pricing change month-to-month, you
+can switch providers without rewriting your tasks. The same `paper_reader`
+that runs on Codex today can run on Claude Code Max tomorrow with one
+environment variable.
+
+---
+
+## Why not just use Claude Code or Codex directly?
+
+Claude Code, Codex, and Gemini CLI are **interactive tools** — you sit at
+the terminal, type a request, watch it work, type the next request.
+Steward turns them into **delegated background workers**:
+
+- **You set up tasks once.** They run on a schedule (hourly/daily/weekly)
+  without you opening the terminal.
+- **You read a daily digest**, not a transcript. One email summarizing
+  what every task produced today, with action items extracted.
+- **It self-heals across days.** When a task breaks, the reflector
+  detects it, spawns a fix agent, re-runs the task, and verifies the
+  output before declaring it resolved. You only see the failure if the
+  reflector can't resolve it.
+- **It uses Claude Code / Codex under the hood.** Steward isn't a
+  replacement — it's a thin layer that delegates to the CLI agent you
+  already have.
+
+If you only need to run something once, use Claude Code directly. If
+you need to run it every morning at 5 AM and only hear about it when
+something is wrong, that's what Steward is for.
 
 ---
 
