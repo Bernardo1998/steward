@@ -16,9 +16,29 @@ from typing import Optional
 import yaml
 
 from .guardrails import g6_self_review, GuardrailResult
-from .email_composer import compose_dashboard
+from .email_composer import compose_dashboard, compose_email
 
 from ..comm.email import _get_config_path
+
+
+def _resolve_report_config(ps: dict) -> dict:
+    """Read `report` block from per-task charter.yaml if task_dir is provided.
+
+    Returns {} when task_dir is missing or charter.yaml is unreadable, in
+    which case the caller falls back to dashboard / `[LTT]` defaults.
+    """
+    task_dir = ps.get("task_dir")
+    if not task_dir:
+        return {}
+    charter_path = Path(task_dir) / "charter.yaml"
+    if not charter_path.exists():
+        return {}
+    try:
+        with open(charter_path) as f:
+            charter = yaml.safe_load(f) or {}
+        return charter.get("report") or {}
+    except Exception:
+        return {}
 
 
 def _load_email_config() -> dict:
@@ -108,21 +128,40 @@ def send_ltt_email(
         if issues:
             print(f"  [phase4] G6 issues for {ps['project_id']}: {issues}", file=sys.stderr)
 
-    # Compose email
-    body_md = compose_dashboard(projects_status, global_cycle)
+    # Resolve per-task report config (style + subject prefix) from each
+    # project's charter.yaml. Primary project (index 0) drives composer
+    # selection and subject prefix; this matches the existing single-project
+    # call sites in LTT-template tasks. Multi-project callers should send one
+    # email per task today.
+    reports = [_resolve_report_config(ps) for ps in projects_status]
+    primary_report = reports[0] if reports else {}
+    style = (primary_report.get("style") or "dashboard").lower()
+    narrative_spec = primary_report.get("narrative") or {}
+    prefix = (
+        (primary_report.get("own_email") or {}).get("prefix")
+        or "[LTT]"
+    )
 
-    # Determine subject
+    # Compose email body via dispatcher
+    body_md = compose_email(
+        projects_status,
+        global_cycle,
+        style=style,
+        narrative_spec=narrative_spec,
+    )
+
+    # Determine subject (using charter-resolved prefix)
     any_needs_input = any(
         ps["status"].get("needs_human_input", False) for ps in projects_status
     )
     max_days = max((ps.get("days_since_reply", 0) for ps in projects_status), default=0)
 
     if max_days == 0:
-        subject = f"[LTT] Research Report — Cycle {global_cycle}"
+        subject = f"{prefix} Research Report — Cycle {global_cycle}"
     elif any_needs_input:
-        subject = f"[LTT] Cycle {global_cycle} — Day {max_days + 1}, needs input"
+        subject = f"{prefix} Cycle {global_cycle} — Day {max_days + 1}, needs input"
     else:
-        subject = f"[LTT] Cycle {global_cycle} — Updated"
+        subject = f"{prefix} Cycle {global_cycle} — Updated"
 
     if dry_run:
         return {
