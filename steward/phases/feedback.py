@@ -119,7 +119,20 @@ def send_ltt_email(
         (send_result, guardrail_results)
     """
     guardrail_results = []
-    global_cycle = global_state.get("global_cycle", 0)
+    # Derive the cycle number used in the subject + body. Multi-project LTT
+    # callers set `global_state["global_cycle"]` directly; single-task
+    # callers (LTT-template tasks calling send_ltt_email with their own
+    # task_state.json as global_state) don't have that key, so fall back to
+    # the primary project's status cycle_number, then to global_state["cycle"].
+    # Without this fallback, single-task emails ship as "Cycle 0".
+    global_cycle = global_state.get("global_cycle")
+    if not global_cycle:
+        primary_status = (projects_status[0].get("status") or {}) if projects_status else {}
+        global_cycle = (
+            primary_status.get("cycle_number")
+            or global_state.get("cycle")
+            or 0
+        )
 
     # G6: Self-review for each project
     for ps in projects_status:
