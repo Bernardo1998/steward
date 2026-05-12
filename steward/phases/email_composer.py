@@ -192,6 +192,45 @@ def _load_log_entry_for_step(state_dir: Path, step_id: str) -> dict:
     return match
 
 
+def _gather_cycle_research(state_dir: Path, cycle_number: int, max_n: int = 8) -> list[dict]:
+    """Pull research-type exploration_log entries for the given cycle.
+
+    Research entries are entries with `type != "experiment"` (steward's
+    Phase 2 doesn't set `type` explicitly; only Phase 2b does, with
+    `type: "experiment"`). Includes both successful and failed queries so
+    timeouts surface in the email.
+    """
+    log_path = state_dir / "exploration_log.jsonl"
+    if not log_path.exists():
+        return []
+    out: list[dict] = []
+    with open(log_path) as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+            except Exception:
+                continue
+            if entry.get("cycle") != cycle_number:
+                continue
+            if entry.get("type") == "experiment":
+                continue
+            out.append(entry)
+    return out[-max_n:]
+
+
+def _classify_research_status(entry: dict) -> str:
+    """Heuristic 'succeeded / partial / failed' from a research log entry."""
+    if entry.get("status") in ("failed", "error", "timeout"):
+        return "failed"
+    conclusion = (entry.get("conclusion") or "").lower()
+    if conclusion.startswith("failed:") or "timeout" in conclusion or "timed out" in conclusion:
+        return "failed"
+    sources = entry.get("sources_found") or []
+    if not sources:
+        return "partial"
+    return "succeeded"
+
+
 def _step_artifacts(step: dict, state_dir: Path, repo_path: Path) -> dict:
     step_id = step.get("step_id", "")
     code_path = repo_path / "experiments" / f"{step_id}.py"
@@ -223,49 +262,67 @@ def _gather_recent_steps(state_dir: Path, repo_path: Path, max_steps: int = 6) -
 
 
 _NARRATIVE_PROMPT = """You are writing a research email update for the principal
-researcher on a research project. The reader is a researcher and they want
-each completed experiment treated as a MINI-PAPER: a labeled block giving
-method, baselines, what was actually implemented (and where the code came
-from), dataset, metrics, result values, and interpretation.
+researcher on a research project. The reader is a researcher who wants each
+research query and each completed experiment treated as a labeled mini-
+report, with structure that ADAPTS to whether this was a research-heavy or
+experiment-heavy cycle.
 
 STRICT RULES — apply to everything you write:
 
-  WRITE  : per-experiment mini-paper with labels in the exact order below.
+  WRITE  : per-query and per-experiment mini-reports with the exact labels
+           specified for each section below.
   WRITE  : actual numeric/qualitative results from the bundled JSON, not
-           prose summaries of the conclusion field.
-  WRITE  : paper URLs / GitHub URLs when external code or methods are used.
+           prose summaries of conclusion fields.
+  WRITE  : paper URLs / GitHub URLs when external code, methods, or sources
+           are used.
   DO NOT : write step IDs, internal file paths, commit hashes, or
            `experiment:<step_id>` strings.
   DO NOT : use "Implemented X", "Added support for Y", "Refactored Z".
   DO NOT : start with "Hello"; do not use emojis or marketing voice.
-  DO NOT : invent baselines/datasets/papers not present in the bundles.
+  DO NOT : invent baselines/datasets/papers/sources not present in the bundles.
 
 REQUIRED STRUCTURE — produce EXACTLY these sections, in this order, with
 these headers:
 
 # Cycle {cycle_number} — Executive Read
 
-(1–3 sentences. The single most important result this cycle and what it means
-for the central claim. No jargon. No IDs.)
+(1–3 sentences. The single most important result this cycle and what it
+means for the central claim. State whether the cycle was research-heavy or
+experiment-heavy, and what kind of progress was made.)
+
+# Research this cycle
+
+(One mini-report block per research query in the RESEARCH BUNDLES below.
+If RESEARCH BUNDLES is empty AND cycle_mode is experiment_heavy, write the
+single line: "Skipped (experiment-heavy cycle)" — nothing else. If RESEARCH
+BUNDLES is empty AND cycle_mode is research_heavy, write the single line:
+"Phase 2 ran but produced no logged queries" — nothing else. Otherwise, for
+each query in the bundles, use exactly these labels, in this order:)
+
+    ## <Headline of what the query learned, NOT the literal query>
+    **Question.** <The query verbatim, lightly cleaned (strip newlines)>
+    **Status.** Succeeded | Partial | Failed (state the reason for partial/failed in one short clause, e.g. "timed out", "no sources returned")
+    **Sources consulted.** <Paper / arXiv / GitHub URLs from sources_found, with a brief descriptor per source. If empty, write "(none)".>
+    **Key takeaway.** <1–2 sentences synthesizing what the query established. If Failed, write "(no answer — query failed; see Status)".>
 
 # Experiments this cycle
 
-(One mini-paper block per completed experiment listed in the bundles below,
-most recent first. Give each a human-readable headline (NOT a step_id).
-Use exactly these labels, in this order:)
+(One mini-paper block per completed experiment in the EXPERIMENT BUNDLES
+below, most recent first. If EXPERIMENT BUNDLES is empty AND cycle_mode is
+research_heavy, write the single line: "Skipped (research-heavy cycle)" —
+nothing else. If EXPERIMENT BUNDLES is empty AND cycle_mode is
+experiment_heavy, write the single line: "Phase 2b ran but no step
+completed this cycle" — nothing else. Otherwise, for each step use exactly
+these labels, in this order:)
 
-    ## <Headline of what was learned>
+    ## <Headline of what was learned, NOT a step_id>
     **Method.** <Technique in 1–2 sentences>
     **Baselines.** <Conditions compared by name>
-    **Implementation.** <Hand-coded fixture | wrapped library X | adapted from paper Y (URL) — plus key non-default parameters>
-    **Dataset / Inputs.** <Benchmark + subset; or "synthetic candidate pool of N" if hand-crafted. Cite the upstream issue/PR URL if available.>
+    **Implementation.** <Hand-coded | wrapped library X | adapted from paper Y (URL) — plus key non-default parameters>
+    **Dataset / Inputs.** <Benchmark + subset; or "synthetic pool of N" if hand-crafted. Cite the upstream issue/PR URL if available.>
     **Metrics.** <What was measured>
     **Results.** <Actual numbers / qualitative outcomes — pulled from the results JSON bundles>
     **Interpretation.** <1–2 sentences tying the numbers to the central claim>
-
-(If a label genuinely does not apply, write "(none — this was X)". If no
-experiments completed in the most recent cycle, say so in one sentence and
-explain why before listing earlier experiments for context.)
 
 # Does this move the locked goals?
 
@@ -275,8 +332,10 @@ explain why before listing earlier experiments for context.)
 
 # Hypothesis update
 
-(The current hypothesis as one paragraph. If direction_changed=True open with
-"Direction shift this cycle:" otherwise open with "Hypothesis stable:".)
+(The current hypothesis as one paragraph. If direction_changed=True open
+with "Direction shift this cycle:" otherwise open with "Hypothesis stable:".
+Note: a confidence jump on research-only evidence is fine to flag but should
+not be inflated to "supported" status in section 3.)
 
 # Open questions still unanswered
 
@@ -294,6 +353,7 @@ Drop any suggestion that reads like an engineering task.)
 INPUTS YOU MUST USE:
 
 Cycle number: {cycle_number}
+Cycle mode (this cycle's rotation): {cycle_mode}
 Confidence: {confidence}/5
 Direction changed from prior cycle: {direction_changed}
 
@@ -315,7 +375,15 @@ Open questions:
 Action suggestions (filter ruthlessly; drop engineering-shaped items):
 {suggestions_block}
 
-EXPERIMENT BUNDLES — most recent first. For each step you will see:
+RESEARCH BUNDLES — Phase-2 queries from this cycle. For each you will see:
+  - query (the literal research question fired)
+  - status (succeeded / partial / failed; classify by sources + conclusion)
+  - sources_found (URLs and brief metadata)
+  - conclusion (if logged)
+
+{research_bundles_block}
+
+EXPERIMENT BUNDLES — completed Phase-2b steps. For each you will see:
   - description (LLM-written intent from when the experiment was planned)
   - log conclusion + sources_found (post-run summary)
   - results JSON (THE actual numbers — use these for the Results label)
@@ -324,7 +392,6 @@ EXPERIMENT BUNDLES — most recent first. For each step you will see:
     NEVER quote raw file paths or imports as the email content. Translate
     them into plain method/dataset language.)
 
-Bundles:
 {bundles_block}
 
 ---
@@ -362,6 +429,33 @@ def _format_things(things: list[str]) -> str:
     if not things:
         return "(none)"
     return "\n".join(f"- {t}" for t in things)
+
+
+def _format_research_bundles(entries: list[dict]) -> str:
+    if not entries:
+        return "(no research entries logged for this cycle)"
+    parts = []
+    for i, e in enumerate(entries, start=1):
+        query = (e.get("query") or "").strip().replace("\n", " ")
+        status = _classify_research_status(e)
+        conclusion = (e.get("conclusion") or "").strip().replace("\n", " ")
+        sources = e.get("sources_found") or []
+        src_lines = []
+        for s in sources[:8]:
+            url = s.get("url_or_doi") or s.get("url") or s.get("doi") or ""
+            title = (s.get("title") or "").strip()
+            summary = (s.get("summary") or "").strip()
+            desc = " — ".join(p for p in [title, summary] if p)
+            src_lines.append(f"      - {url} {('— ' + desc) if desc else ''}".rstrip())
+        src_block = "\n".join(src_lines) if src_lines else "      (no sources_found)"
+        parts.append(
+            f"---- RESEARCH BUNDLE {i} ----\n"
+            f"query: {query}\n"
+            f"classified_status: {status}\n"
+            f"conclusion: {conclusion or '(none)'}\n"
+            f"sources_found:\n{src_block}"
+        )
+    return "\n\n".join(parts)
 
 
 def _format_bundles(bundles: list[dict]) -> str:
@@ -435,6 +529,13 @@ def compose_narrative_for_project(
             max_steps=int(narrative_spec.get("max_experiments", 6)),
         )
 
+    # Research bundles for THIS cycle (Phase 2 queries — succeeded and failed)
+    research_entries = _gather_cycle_research(
+        state_dir,
+        int(cycle_number) if isinstance(cycle_number, (int, float, str)) else 0,
+        max_n=int(narrative_spec.get("max_research_queries", 8)),
+    )
+
     status = ps.get("status") or {}
     confidence = status.get("confidence_score", "?")
     current_hyp = (status.get("current_hypothesis") or "").strip()
@@ -444,8 +545,18 @@ def compose_narrative_for_project(
         prior_hyp = prior_path.read_text(errors="replace").strip()
     direction_changed = _direction_changed(prior_hyp, current_hyp)
 
+    # Cycle mode — for the prompt's research/experiment section dispatch.
+    # We prefer ps["cycle_summary"]["cycle_mode"] if the caller provided it;
+    # else read task_state.json::cycle_mode; else default "unknown".
+    cycle_mode = (
+        (ps.get("cycle_summary") or {}).get("cycle_mode")
+        or _load_json(state_dir / "task_state.json").get("cycle_mode")
+        or "unknown"
+    )
+
     prompt = _NARRATIVE_PROMPT.format(
         cycle_number=cycle_number,
+        cycle_mode=cycle_mode,
         confidence=confidence,
         direction_changed=str(direction_changed),
         goal=(definition.get("goal") or "")[:1200],
@@ -454,6 +565,7 @@ def compose_narrative_for_project(
         prior_hypothesis=prior_hyp[:1500] or "(no prior hypothesis recorded)",
         questions_block=_format_questions(status.get("open_questions") or []),
         suggestions_block=_format_suggestions(status.get("action_suggestions") or []),
+        research_bundles_block=_format_research_bundles(research_entries),
         bundles_block=_format_bundles(bundles),
     )
 
@@ -470,8 +582,10 @@ def compose_narrative_for_project(
 
     footer = (
         "\n\n---\n"
-        f"_Cycle {cycle_number} · confidence {confidence}/5 · "
+        f"_Cycle {cycle_number} · mode={cycle_mode} · "
+        f"confidence {confidence}/5 · "
         f"direction_changed={direction_changed} · "
+        f"research_queries_in_email={len(research_entries)} · "
         f"experiments_in_email={len(bundles)} · "
         f"sent {datetime.now().isoformat(timespec='seconds')}_"
     )
