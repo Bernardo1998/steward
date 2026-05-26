@@ -232,6 +232,64 @@ report:
 
 ---
 
+## Plan Runner mode
+
+`plan_runner` is a sibling worker to LTT, suitable for projects where the
+user wants to drive concrete plans rather than free exploration. The
+worker:
+
+- Reads `plan.yaml` from the task folder as the source of truth for what
+  to do next.
+- Executes one plan step per cycle (uses the same Phase 2b experiment
+  dispatcher as LTT).
+- After each completed step, generates *deepening* actions (ablate,
+  robust, citation_harden, failure_probe, gap_check) — never new scope.
+- Holds state updates in `project_state.draft.md` until the user approves,
+  either by editing `project_state.md` or by replying to the cycle email
+  with `/approve v<N>`.
+- Replaces LTT's speculate phase with reviewer-scrutiny: hostile-reviewer
+  role-play targeting the *result*, not the hypothesis.
+
+Compared to LTT:
+- LTT explores divergently; plan_runner converges on the approved plan.
+- LTT auto-evolves `status.yaml::current_hypothesis`; plan_runner edits
+  `project_state.md` only on explicit user approval.
+- LTT's email reports cycle progress against goals; plan_runner's email
+  reports plan execution + deepening + approval prompts.
+
+### Opting a task in
+
+Set in the task's `charter.yaml`:
+
+    execution:
+      mode: plan_runner
+    report:
+      style: narrative
+      narrative:
+        style_variant: plan_runner
+      own_email:
+        prefix: "[<TASK-TAG>]"
+
+Add `plan.yaml` and `project_state.md` files to the task folder. See
+`TimeManagement/tasks/_template_plan_runner/` for a complete scaffold.
+
+### Phase library
+
+`steward/phases/plan_phases.py` exports the plan-runner-specific phase
+functions (load_plan, select_next_action, judge_step_completion,
+generate_deepening_actions, draft_state_update, check_approval,
+apply_approval, reviewer_scrutiny, build_email_inputs). Per-task `run.py`
+orchestrates these alongside the existing `load_context`, `research`,
+`synthesize`, `send_ltt_email` phases reused from LTT.
+
+### Existing LTT tasks are not affected
+
+A task without `execution.mode: plan_runner` (or with `execution.mode: ltt`
+explicitly) keeps using the LTT pipeline. No code path in the LTT phases
+was modified.
+
+---
+
 ## Communication
 
 Reports delivered via **email** (SMTP/Gmail). Reply to steer task behavior —

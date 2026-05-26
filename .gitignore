@@ -29,6 +29,9 @@ email_config.yaml
 **/google_token.json
 research_output/
 
+# Local pre-refactor snapshots (do not publish)
+archive/
+
 # Personal dev notes (kept locally, never committed)
 DELEGATE_VS_CRYSTAL.md
 GITHUB_ATTRACT.md

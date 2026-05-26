@@ -21,6 +21,7 @@ steward-init = "init_cmd:main"
 steward-status = "status_cmd:main"
 steward-promote = "steward.promote:main"
 steward-add-task = "steward.add_task:main"
+steward-plan-runner = "steward.plan_runner.scaffolder:_cli_main"
 
 [tool.setuptools.packages.find]
 include = ["steward*"]

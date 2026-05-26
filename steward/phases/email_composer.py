@@ -428,7 +428,7 @@ def _format_suggestions(suggestions: list[dict]) -> str:
 def _format_things(things: list[str]) -> str:
     if not things:
         return "(none)"
-    return "\n".join(f"- {t}" for t in things)
+    return "\n".join(f"- TS#{i+1}: {t}" for i, t in enumerate(things))
 
 
 def _format_research_bundles(entries: list[dict]) -> str:
@@ -496,6 +496,331 @@ def _direction_changed(prior_hypothesis: str, new_hypothesis: str, threshold: fl
     return SequenceMatcher(None, a, b).ratio() < threshold
 
 
+_PLAN_RUNNER_PROMPT = """You are writing a research email for the principal
+researcher running a plan_runner cycle. The cycle has just finished. The
+reader wants to understand WHY the experiment was run, WHAT IT TOLD US
+RELATIVE TO THE HYPOTHESIS, and WHAT TO DO NEXT. NOT a status report.
+
+STRICT RULES — apply to everything you write:
+
+  WRITE  : numeric values ONLY when they tie to a headline-hypothesis metric
+           (cause accuracy, multi-hop cause, mediation delta, classifier ECE,
+           etc.). Do NOT list per-step file paths, per-bundle metric dumps,
+           or every weakness in the log.
+  WRITE  : absolute file paths ONLY when the reader would open them locally
+           to verify a claim. Max 2 paths per section.
+  WRITE  : "expected outcome" as a CONCRETE number or directional comparison
+           (≥ baseline, Δ > 0, ≥ 30 failures classified). Never "promising",
+           "strong", or "good results".
+  WRITE  : if a bundle's results JSON contains a flag indicating the run was
+           NOT a real experiment (e.g. `mode: offline_synthetic_fallback`,
+           `api_status: connection_error`, all `total_tokens: 0`, an evaluator
+           path that mismatches the locked one, or `decisions_made` calling
+           out a fallback/synthetic path), call this out plainly in §2 and §3
+           — the result is CONTESTED and the verdict should be "inconclusive
+           (instrumentation broken)" unless the bundle is clean.
+  WRITE  : paper URLs / GitHub URLs when external code, methods, or sources
+           are used.
+  DO NOT : invent results not present in the BUNDLES. If a number is absent,
+           write "not reported".
+  DO NOT : invent new modules / datasets / questions outside the locked
+           things_to_show. Deepening must strengthen, not expand.
+  DO NOT : produce per-step status tables, per-step metric blocks, "Locked
+           goals" recaps, "Open questions" sections, or "Suggested next
+           cycle" sections. Those are FOLDED into the four required sections
+           below.
+  DO NOT : start with "Hello"; do not use emojis or marketing voice.
+
+REQUIRED STRUCTURE — produce EXACTLY four numbered sections (plus the H1,
+banner, and optional approval tail). Nothing else.
+
+The STAGE PROGRESS BANNER below this paragraph is computed by the runner.
+Reproduce it VERBATIM as the very next line under the H1 — do not rephrase,
+shorten, expand, or move it. If the banner says "(no stages defined)", keep
+that phrasing. The composer will post-validate and prepend it automatically
+if you omit it.
+
+STAGE PROGRESS BANNER (reproduce verbatim as the second line):
+{stage_progress_banner_block}
+
+# Cycle {cycle_number} — <step or deepening that ran>: <verdict in 5–8 words>
+
+{stage_progress_banner_block}
+
+## 1. What we did this cycle and why
+
+(One short paragraph. Name the step or deepening that ran. Quote or
+paraphrase the SPECIFIC locked things_to_show bullet this step provides
+evidence for. Explain what this step UNIQUELY tests — mechanism floor,
+baseline bar, ablation isolation, causal claim, etc. — and what a pass
+vs a fail would teach us. End with ONE inline pointer to the cycle's raw
+artifacts, e.g. `tasks/<id>/state/exploration_log.jsonl` plus the per-step
+results JSON.)
+
+## 2. Outcome vs. expectation
+
+(State the EXPECTED outcome first — concrete metric + direction. Then
+the OBSERVED outcome — ONLY metrics relevant to the hypothesis. Render as
+a markdown table if there are 2+ metrics; otherwise prose. End with a
+bolded one-line **Verdict:** one of "meets expectation" / "above
+expectation" / "below expectation" / "inconclusive (instrumentation
+broken)". If the bundle is contested per the STRICT RULES, default to
+"inconclusive".)
+
+## 3. <Diagnosis | Hardening to do>
+
+(BRANCH ON VERDICT:
+
+ - If verdict was "below expectation" OR "inconclusive", title this section
+   exactly: `## 3. Why the result fell short — ranked candidate causes`
+   List 2–4 candidate explanations, RANKED by likelihood. Each one line.
+   Each MUST cite specific evidence in the bundle or weaknesses log
+   (e.g. "total_tokens=0 across all 100 rows", "evaluator=evaluate_code_gen.py
+   not locked evaluate_100.py"). The top item is the highest-leverage fix.
+
+ - If verdict was "meets expectation" OR "above expectation", title this
+   section exactly: `## 3. What hardening this result needs before publication`
+   List 2–4 deepening actions needed (missing CIs, missing convergence
+   curve, missing single-hop split, missing typed-failure breakdown, etc.).
+   Each one line.
+
+In both modes, draw from WEAKNESSES LOG below — do NOT invent new concerns.)
+
+## 4. Next step
+
+(2–4 numbered actions in execution order. Each one line. Each MUST name:
+(a) the file to edit OR step to dispatch, and (b) what it accomplishes.
+Stay strictly inside the locked things_to_show — no scope expansion.
+These come from §3, not from new ideas.)
+
+---
+
+(If awaiting_approval is True, append exactly this tail block. Otherwise
+omit entirely.)
+
+### Needs your approval (incidental)
+
+(One short paragraph. Classify the approval as one of:
+   - "Bookkeeping only — commits runner records into project_state.md"
+   - "Plan structure change — modifies plan.yaml steps/stages"
+   - "Blesses contested results" (if §3 flagged any committed bundle)
+Say what it unblocks. Say what it does NOT endorse (refer to §3 if any
+result is contested). Give the two ways to approve:
+`/approve v<N>` OR edit `project_state.md`. End with: "Or reject by
+editing `plan.yaml` per §4 above and bumping `version`.")
+
+---
+INPUTS YOU MUST USE:
+
+Cycle number: {cycle_number}
+Plan title: {plan_title}
+Plan version: {plan_version}
+Awaiting approval: {awaiting_approval}
+Awaiting reason: {awaiting_reason}
+Draft state_version (proposed, unapproved): {draft_state_version}
+Steps completed: {steps_completed}/{steps_total}
+
+Locked things_to_show:
+{things_to_show_block}
+
+PLAN STEPS (use to write Plan execution; each entry has step_id, headline,
+status, attempts, completed_at, last_results_path, deepening_cycles_done,
+reviewer_readiness):
+
+{plan_steps_block}
+
+EXECUTED THIS CYCLE (the action chosen by the runner this cycle —
+plan_step / deepening / awaiting_approval / stuck):
+
+{executed_block}
+
+DEEPENING THIS CYCLE (zero-or-one block — the deepening action whose
+results landed this cycle, if any):
+
+{deepening_block}
+
+EXPERIMENT BUNDLES (results JSON for each completed step / deepening; use
+for the Result labels):
+
+{bundles_block}
+
+WEAKNESSES LOG (hostile-reviewer notes accumulated across cycles, most
+recent first; use for the Reviewer scrutiny section):
+
+{weaknesses_block}
+
+DIFF PREVIEW (unified diff from project_state.md → project_state.draft.md
+— first 60 lines; empty when not awaiting approval):
+
+{diff_block}
+
+---
+
+Produce ONLY the markdown email body. No preamble, no fenced code block, no
+JSON. Begin with "# Cycle {cycle_number} — Executive Read" on the first line.
+"""
+
+
+def _format_plan_steps_block(plan_summary: dict, plan_state_readiness: dict) -> str:
+    steps = plan_summary.get("completed_steps") or []
+    if not steps:
+        return "(no plan steps recorded)"
+    parts = []
+    for s in steps:
+        sid = s.get("step_id", "")
+        readiness = plan_state_readiness.get(sid, "not_yet")
+        parts.append(
+            f"---- PLAN STEP ----\n"
+            f"step_id: {sid}\n"
+            f"headline: {s.get('headline', '')}\n"
+            f"status: {s.get('status', 'pending')}\n"
+            f"attempts: {s.get('attempts', 0)}\n"
+            f"completed_at: {s.get('completed_at') or '(not yet)'}\n"
+            f"last_results_path: {s.get('last_results_path') or '(none)'}\n"
+            f"deepening_cycles_done: {s.get('deepening_cycles_done', 0)}\n"
+            f"reviewer_readiness: {readiness}"
+        )
+    return "\n\n".join(parts)
+
+
+def _format_executed_block(cycle_action: dict) -> str:
+    if not cycle_action:
+        return "(no action recorded for this cycle)"
+    kind = cycle_action.get("kind", "?")
+    if kind == "plan_step":
+        step = cycle_action.get("step") or {}
+        return (
+            f"kind: plan_step\n"
+            f"step_id: {step.get('id', '')}\n"
+            f"type: {step.get('type', '')}\n"
+            f"description: {step.get('description', '')}"
+        )
+    if kind == "deepening":
+        action = cycle_action.get("action") or {}
+        return (
+            f"kind: deepening\n"
+            f"action_id: {action.get('id', '')}\n"
+            f"parent_step_id: {action.get('parent_step_id', '')}\n"
+            f"type: {action.get('type', '')}\n"
+            f"description: {action.get('description', '')}"
+        )
+    if kind in ("awaiting_approval", "stuck"):
+        return f"kind: {kind}\nreason: {cycle_action.get('reason', '')}"
+    return f"kind: {kind}\nraw: {json.dumps(cycle_action)[:400]}"
+
+
+def _format_deepening_block(plan_summary: dict) -> str:
+    deepening = plan_summary.get("deepening_this_cycle") or []
+    if not deepening:
+        return "(none this cycle)"
+    parts = []
+    for d in deepening:
+        parts.append(
+            f"action_id: {d.get('id', '')}\n"
+            f"parent_step_id: {d.get('parent_step_id', '')}\n"
+            f"type: {d.get('type', '')}\n"
+            f"description: {d.get('description', '')}"
+        )
+    return "\n\n".join(parts)
+
+
+def _format_weaknesses_block(plan_summary: dict) -> str:
+    weaknesses = plan_summary.get("weaknesses_log") or []
+    if not weaknesses:
+        return "(none recorded)"
+    parts = []
+    for w in weaknesses[:6]:
+        parts.append(
+            f"- step_id: {w.get('step_id', '?')}\n"
+            f"  weakness: {(w.get('weakness') or '').strip()}\n"
+            f"  suggested_deepening: {(w.get('suggested_deepening') or '').strip()}"
+        )
+    return "\n".join(parts)
+
+
+def _format_plan_runner_bundles(plan_summary: dict, max_bundles: int = 6) -> str:
+    bundles = plan_summary.get("completed_bundles") or []
+    if not bundles:
+        return "(no result bundles available)"
+    parts = []
+    for i, b in enumerate(bundles[:max_bundles], start=1):
+        results_str = json.dumps(b.get("results") or {}, indent=2)[:6000] or "(no results JSON)"
+        parts.append(
+            f"---- BUNDLE {i} ----\n"
+            f"step_id: {b.get('step_id', '')}\n"
+            f"description: {b.get('description', '')}\n"
+            f"results_json:\n{results_str}"
+        )
+    return "\n\n".join(parts)
+
+
+def _ensure_stage_banner(body: str, banner: str) -> str:
+    """Guarantee the banner appears as the second non-empty line of `body`.
+
+    Behavior:
+      - If the LLM already produced a line starting with ``**Stage progress.``
+        among the first 6 non-empty lines, leave the body alone.
+      - Otherwise, prepend `banner` immediately after the first H1 line (or
+        at the very top if there is no H1).
+
+    Returns the (possibly mutated) body."""
+    lines = body.splitlines()
+    non_empty = [(i, l) for i, l in enumerate(lines) if l.strip()]
+    for i, l in non_empty[:6]:
+        if l.strip().startswith("**Stage progress."):
+            return body
+
+    # Find the H1 line and insert banner after it. If no H1, prepend at top.
+    insert_at = 0
+    for i, l in enumerate(lines):
+        if l.startswith("# "):
+            insert_at = i + 1
+            break
+    head = lines[:insert_at]
+    tail = lines[insert_at:]
+    out = list(head) + ["", banner, ""] + list(tail)
+    # Collapse leading blank line if we added one before an existing blank.
+    while out and out[0] == "":
+        out.pop(0)
+    return "\n".join(out).rstrip() + "\n"
+
+
+def _compose_plan_runner_prompt(
+    cycle_number: int,
+    plan_summary: dict,
+    things_to_show: list[str],
+) -> str:
+    plan_state_readiness = plan_summary.get("reviewer_readiness") or {}
+    steps = plan_summary.get("completed_steps") or []
+    steps_completed = sum(
+        1 for s in steps if s.get("status") in ("completed", "done_enough")
+    )
+    steps_total = len(steps)
+    diff_preview = plan_summary.get("draft_diff_preview") or "(no diff — not awaiting approval)"
+    banner = (
+        plan_summary.get("stage_progress_banner")
+        or "**Stage progress.** (no stages defined)"
+    )
+    return _PLAN_RUNNER_PROMPT.format(
+        cycle_number=cycle_number,
+        plan_title=plan_summary.get("plan_title") or "(untitled)",
+        plan_version=plan_summary.get("plan_version", "?"),
+        awaiting_approval=str(bool(plan_summary.get("awaiting_approval"))),
+        awaiting_reason=plan_summary.get("awaiting_reason") or "(n/a)",
+        draft_state_version=plan_summary.get("draft_state_version") or "(none)",
+        steps_completed=steps_completed,
+        steps_total=steps_total,
+        things_to_show_block=_format_things(things_to_show or []),
+        plan_steps_block=_format_plan_steps_block(plan_summary, plan_state_readiness),
+        executed_block=_format_executed_block(plan_summary.get("executed_this_cycle") or {}),
+        deepening_block=_format_deepening_block(plan_summary),
+        bundles_block=_format_plan_runner_bundles(plan_summary),
+        weaknesses_block=_format_weaknesses_block(plan_summary),
+        diff_block=diff_preview,
+        stage_progress_banner_block=banner,
+    )
+
+
 def compose_narrative_for_project(
     ps: dict,
     cycle_number: int,
@@ -505,11 +830,67 @@ def compose_narrative_for_project(
 
     Requires `ps["task_dir"]` to load per-step artifacts. If missing, returns
     the dashboard composition for this single project as a graceful fallback.
+
+    When `narrative_spec["style_variant"] == "plan_runner"`, this routes to
+    the plan-runner-flavored prompt which expects `ps["plan_runner_summary"]`
+    packed by `steward.phases.plan_phases.build_email_inputs(...)`. If the
+    summary is missing, falls back to the standard LTT narrative below.
     """
     narrative_spec = narrative_spec or {}
     task_dir_str = ps.get("task_dir")
     if not task_dir_str:
         return compose_dashboard([ps], cycle_number)
+
+    # --- plan_runner branch -------------------------------------------------
+    if (narrative_spec.get("style_variant") or "").lower() == "plan_runner":
+        plan_summary = ps.get("plan_runner_summary")
+        if plan_summary:
+            definition = ps.get("definition") or {}
+            things = definition.get("things_to_show") or []
+            prompt = _compose_plan_runner_prompt(cycle_number, plan_summary, things)
+
+            from steward.llm import call_llm
+
+            llm_timeout = int(narrative_spec.get("llm_timeout_seconds") or 300)
+            body = call_llm(prompt, timeout=llm_timeout) or ""
+            body = body.strip()
+            if not body.lower().startswith("# cycle"):
+                idx = body.find("# Cycle")
+                if idx >= 0:
+                    body = body[idx:]
+
+            # Stage-progress banner: hard guarantee. The composer prompt asks
+            # the LLM to reproduce the banner verbatim as the second line; if
+            # it didn't, we prepend it programmatically so the banner is
+            # always present.
+            banner = (
+                plan_summary.get("stage_progress_banner")
+                or "**Stage progress.** (no stages defined)"
+            )
+            body = _ensure_stage_banner(body, banner)
+
+            steps = plan_summary.get("completed_steps") or []
+            steps_completed = sum(
+                1 for s in steps if s.get("status") in ("completed", "done_enough")
+            )
+            steps_total = len(steps)
+            awaiting = bool(plan_summary.get("awaiting_approval"))
+            footer = (
+                "\n\n---\n"
+                f"_Cycle {cycle_number} · "
+                f"style_variant=plan_runner · "
+                f"plan_version={plan_summary.get('plan_version', '?')} · "
+                f"awaiting_approval={awaiting} · "
+                f"steps_completed={steps_completed}/{steps_total} · "
+                f"sent {datetime.now().isoformat(timespec='seconds')}_"
+            )
+            return body + footer
+        # Missing plan_runner_summary → fall through to standard narrative.
+        print(
+            "  [email_composer] style_variant=plan_runner but no "
+            "plan_runner_summary; falling back to standard narrative",
+            file=sys.stderr,
+        )
 
     task_dir = Path(task_dir_str)
     state_dir = task_dir / "state"
