@@ -103,6 +103,7 @@ class PlanRunner:
             check_intent_answer,
             check_stage_approval,
             generate_deepening_actions,
+            interpret_reply_nl,
             judge_step_completion,
             load_goal_md,
             load_plan,
@@ -200,6 +201,11 @@ class PlanRunner:
             "days_since_reply": state.get("cooldown", {}).get("days_since_reply", 0),
             "last_message_id": state.get("last_message_id", ""),
             "email_thread_id": state.get("email_thread_id", ""),
+            # phase1's reply check is gated on last_email_date; without it the
+            # email reply path is never even attempted. subject_prefix scopes
+            # the IMAP search to this task's emails.
+            "last_email_date": state.get("last_email_date", ""),
+            "subject_prefix": state.get("subject_prefix", self.email_prefix),
         }
         feedback: Optional[dict] = None
         try:
@@ -212,15 +218,57 @@ class PlanRunner:
         # --- Dump inbox before approval check ---------------------------
         write_inbox_md(self.state_dir, feedback)
 
-        # --- Stage approval check ---------------------------------------
+        # --- Reply de-dup -----------------------------------------------
+        reply_msgid = (feedback or {}).get("reply_msgid")
+
+        def _reply_fresh() -> bool:
+            # Fresh = carries an id we haven't already consumed for an approval.
+            # No id → treat as fresh (can't dedup); file-edit path is never gated.
+            return (not reply_msgid) or reply_msgid != state.get("last_reply_approval_msgid")
+
+        # --- Stage approval check (explicit /approve marker or file edit) ---
+        approved_applied = False
         appr = check_stage_approval(self.state_dir, state, feedback=feedback)
         if appr.get("approved"):
-            print(
-                f"[{task_id}] Stage approval detected ({appr.get('method')}) "
-                f"for stage '{appr.get('stage_id')}'",
-                file=sys.stderr,
-            )
-            apply_stage_approval(self.state_dir, state, appr)
+            is_reply = appr.get("method") in ("email_reply", "nl_reply")
+            if (not is_reply) or _reply_fresh():
+                print(
+                    f"[{task_id}] Stage approval detected ({appr.get('method')}) "
+                    f"for stage '{appr.get('stage_id')}'",
+                    file=sys.stderr,
+                )
+                apply_stage_approval(self.state_dir, state, appr)
+                approved_applied = True
+                if is_reply:
+                    state["last_reply_approval_msgid"] = reply_msgid
+            else:
+                print(f"[{task_id}] approval marker found but this reply was already "
+                      f"used to approve an earlier gate; ignoring", file=sys.stderr)
+
+        # --- NL (plain-English) approval fallback -----------------------
+        # Only when the marker path didn't approve and the reply is fresh.
+        # interpret_reply_nl no-ops unless a gate is currently armed.
+        if not approved_applied and feedback and _reply_fresh():
+            try:
+                nli = interpret_reply_nl(feedback, state, plan)
+            except Exception as e:
+                print(f"[{task_id}] reply interpreter failed: {e}", file=sys.stderr)
+                nli = {}
+            if nli.get("approve"):
+                appr_nl = {
+                    "approved": True,
+                    "method": "nl_reply",
+                    "stage_id": nli.get("stage_id"),
+                    "marker": (nli.get("interpretation") or "")[:120],
+                }
+                print(
+                    f"[{task_id}] Stage approval detected (nl_reply) "
+                    f"for stage '{appr_nl.get('stage_id')}'",
+                    file=sys.stderr,
+                )
+                apply_stage_approval(self.state_dir, state, appr_nl)
+                approved_applied = True
+                state["last_reply_approval_msgid"] = reply_msgid
 
         # --- Intent answer check ----------------------------------------
         intent_answer = check_intent_answer(self.state_dir, plan, feedback, state)
@@ -348,6 +396,31 @@ class PlanRunner:
             elif judgment["status"] == "needs_deepening":
                 progress["status"] = "deepening"
                 completed_bundles.append(bundle)
+                # A step that passed hard criteria but failed the soft rubric
+                # must still generate deepening work, else it parks in
+                # `deepening` with an empty queue and wedges the plan forever.
+                if cycle_action.get("kind") == "plan_step":
+                    try:
+                        new_deepening = generate_deepening_actions(step, bundle, definition, n=3)
+                    except Exception as e:
+                        print(f"[{task_id}] generate_deepening_actions failed: {e}",
+                              file=sys.stderr)
+                        new_deepening = []
+                    if new_deepening:
+                        append_deepening_to_plan(self.task_dir, plan, new_deepening)
+                        progress["deepening_actions_generated"] = list(set(
+                            progress.get("deepening_actions_generated", [])
+                            + [a["id"] for a in new_deepening]
+                        ))
+                elif cycle_action.get("kind") == "deepening":
+                    # Advance the budget even when the deepening action itself
+                    # fails its soft rubric, so it can't re-run indefinitely.
+                    parent_id = step.get("parent_step_id")
+                    if parent_id and parent_id in state["step_progress"]:
+                        parent_prog = state["step_progress"][parent_id]
+                        parent_prog["deepening_cycles_done"] = (
+                            parent_prog.get("deepening_cycles_done", 0) + 1
+                        )
             elif judgment["status"] == "failed":
                 progress["status"] = "failed"
                 errors.append({
@@ -362,8 +435,63 @@ class PlanRunner:
             else:
                 state["stuck_counter"] = state.get("stuck_counter", 0) + 1
 
+        # --- Promote spent `deepening` steps to `done_enough` -----------
+        # A step stays in `deepening` only while it still has an eligible
+        # queued deepening action under its budget. Once the budget is spent
+        # (or no deepening action was ever generated), promote it to
+        # `done_enough` so `_advance_stages` can fire the stage-approval gate
+        # instead of the plan wedging on `stuck` forever.
+        deep_queue = plan.get("deepening_added_by_runner") or []
+        step_caps = {
+            s["id"]: int(s.get("max_deepening_cycles", 4) or 4)
+            for s in plan.get("steps", []) or []
+        }
+        promote_iso = datetime.now().isoformat(timespec="seconds")
+        for sid, prog in state["step_progress"].items():
+            if prog.get("status") != "deepening":
+                continue
+            cap = step_caps.get(sid, 4)
+            done = prog.get("deepening_cycles_done", 0)
+            has_eligible = any(
+                act.get("parent_step_id") == sid
+                and state["step_progress"].get(act["id"], {}).get("status", "pending")
+                in ("pending", "deepening")
+                for act in deep_queue
+            )
+            if done >= cap or not has_eligible:
+                prog["status"] = "done_enough"
+                prog["completed_at"] = prog.get("completed_at") or promote_iso
+
         # --- Stage advancement bookkeeping ------------------------------
         self._advance_stages(plan, state)
+
+        # --- Same-cycle gate approval from an already-waiting reply -----
+        # Gates arm at the END of a cycle (just above), but replies are read
+        # at the START, so a reply already waiting when the gate arms would
+        # otherwise not be honored until the next cycle (a cooldown later).
+        # Re-check the reply against the just-armed gate so it takes effect now.
+        if (feedback and not approved_applied
+                and state.get("awaiting_stage_approval") and _reply_fresh()):
+            appr2 = check_stage_approval(self.state_dir, state, feedback=feedback)
+            if not (appr2.get("approved")
+                    and appr2.get("method") in ("email_reply", "nl_reply")):
+                try:
+                    nli2 = interpret_reply_nl(feedback, state, plan)
+                except Exception as e:
+                    print(f"[{task_id}] post-advance reply interpreter failed: {e}",
+                          file=sys.stderr)
+                    nli2 = {}
+                if nli2.get("approve"):
+                    appr2 = {"approved": True, "method": "nl_reply",
+                             "stage_id": nli2.get("stage_id"),
+                             "marker": (nli2.get("interpretation") or "")[:120]}
+            if appr2.get("approved"):
+                apply_stage_approval(self.state_dir, state, appr2)
+                approved_applied = True
+                state["last_reply_approval_msgid"] = reply_msgid
+                print(f"[{task_id}] gate '{appr2.get('stage_id')}' approved "
+                      f"same-cycle from a waiting reply ({appr2.get('method')})",
+                      file=sys.stderr)
 
         # --- Reviewer scrutiny ------------------------------------------
         progress_map = state.get("step_progress", {})
@@ -440,6 +568,11 @@ class PlanRunner:
                 state["last_message_id"] = email_result["message_id"]
             if meta_for_context.get("email_thread_id"):
                 state["email_thread_id"] = meta_for_context["email_thread_id"]
+            if email_result.get("status") == "sent":
+                # Arm the reply check for next cycle: phase1 only fetches
+                # replies once last_email_date is set, scoped by subject_prefix.
+                state["last_email_date"] = date_str
+                state["subject_prefix"] = self.email_prefix
         except Exception as e:
             print(f"[{task_id}] email send failed: {e}", file=sys.stderr)
             errors.append({"phase": "email", "error": str(e)})

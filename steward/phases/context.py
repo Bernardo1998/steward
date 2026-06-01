@@ -113,7 +113,7 @@ def _load_context_files(project_dir: Path) -> str:
     return "\n\n".join(sections)
 
 
-def _check_email_replies(project_id: str, project_dir: Path, state_meta: dict) -> tuple[Optional[str], list[dict]]:
+def _check_email_replies(project_id: str, project_dir: Path, state_meta: dict) -> tuple[Optional[str], list[dict], Optional[str]]:
     """Check Gmail IMAP for replies/messages for this project.
 
     Strategy: find the most recent message from the user (not the bot)
@@ -122,12 +122,12 @@ def _check_email_replies(project_id: str, project_dir: Path, state_meta: dict) -
     rate-limit retries, or thread mismatches.
 
     Returns:
-        (reply_body_text, attachments_list)
+        (reply_body_text, attachments_list, message_id)
     """
     last_email_date = state_meta.get("last_email_date")
     if not last_email_date:
         print(f"  [phase1] No previous email for {project_id}, skipping reply check", file=sys.stderr)
-        return None, []
+        return None, [], None
 
     # Determine subject prefix from state or default
     subject_prefix = state_meta.get("subject_prefix", "[LTT]")
@@ -136,10 +136,10 @@ def _check_email_replies(project_id: str, project_dir: Path, state_meta: dict) -
         messages = fetch_ltt_replies(since_date=last_email_date, subject_prefix=subject_prefix)
     except Exception as e:
         print(f"  [phase1] IMAP error for {project_id}: {e}", file=sys.stderr)
-        return None, []
+        return None, [], None
 
     if not messages:
-        return None, []
+        return None, [], None
 
     # Filter: only messages FROM someone other than the bot (i.e., from the user)
     bot_address = ""
@@ -162,12 +162,12 @@ def _check_email_replies(project_id: str, project_dir: Path, state_meta: dict) -
         user_messages.append(msg)
 
     if not user_messages:
-        return None, []
+        return None, [], None
 
     # Return the most recent user message (last in list = most recent)
     latest = user_messages[-1]
     print(f"  [phase1] Found user message for {project_id}: {latest.get('subject', '')[:60]}", file=sys.stderr)
-    return latest["body"], latest.get("attachments", [])
+    return latest["body"], latest.get("attachments", []), latest.get("message_id")
 
 
 def _promote_speculative(
@@ -240,7 +240,7 @@ def load_context(
     buffer = _load_yaml(state_root / "speculative_buffer.yaml")
 
     # Check for email reply (text + attachments)
-    reply_text, reply_attachments = _check_email_replies(project_id, state_root, state_meta)
+    reply_text, reply_attachments, reply_msgid = _check_email_replies(project_id, state_root, state_meta)
 
     # Save any attachments to context_files/
     if reply_attachments:
@@ -254,6 +254,13 @@ def load_context(
         print(f"  [phase1] Parsing reply for {project_id}...", file=sys.stderr)
         feedback = g10_parse_feedback(reply_text, status, definition)
         state_meta["days_since_reply"] = 0
+        if isinstance(feedback, dict):
+            # The /approve + /answer regex readers look at feedback["body"];
+            # g10_parse_feedback stores the text under raw_reply, so mirror it
+            # into body here. Also carry the reply's own Message-ID so the
+            # runner can ensure one reply approves at most one stage gate.
+            feedback.setdefault("body", reply_text)
+            feedback["reply_msgid"] = reply_msgid
 
         # Apply corrections
         for correction in feedback.get("corrections", []):

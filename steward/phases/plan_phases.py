@@ -1127,6 +1127,10 @@ def check_stage_approval(
         if isinstance(feedback, dict):
             if isinstance(feedback.get("body"), str):
                 candidate_texts.append(feedback["body"])
+            # g10_parse_feedback stores the original reply under raw_reply;
+            # read it too so the marker is seen even if body was not mirrored.
+            if isinstance(feedback.get("raw_reply"), str):
+                candidate_texts.append(feedback["raw_reply"])
             for r in feedback.get("replies") or []:
                 if isinstance(r, dict) and isinstance(r.get("body"), str):
                     candidate_texts.append(r["body"])
@@ -1167,6 +1171,101 @@ def check_stage_approval(
         }
 
     return {"approved": False, "method": None, "stage_id": blocking_sid, "marker": None}
+
+
+def interpret_reply_nl(
+    feedback: Optional[dict],
+    state: dict,
+    plan: Optional[dict] = None,
+) -> dict:
+    """LLM fallback that reads a plain-English reply for stage-gate intent.
+
+    Only runs when a stage gate is armed (``state.awaiting_stage_approval``);
+    returns a no-op otherwise so we never spend an LLM call on a reply that
+    cannot approve anything. Conservative by design: returns ``approve=True``
+    ONLY when the reply clearly authorizes proceeding past the gate. Replies
+    that hedge ("hold on, let me check the numbers first") return
+    ``hold=True, approve=False``. Any ambiguity, empty reply, or LLM/parse
+    failure falls back to ``approve=False``.
+
+    Returns ``{approve: bool, hold: bool, stage_id: str|None,
+    interpretation: str}``. ``stage_id`` (when approving) is always the
+    currently-blocking stage — this reader never jumps ahead to another gate.
+    """
+    noop = {"approve": False, "hold": False, "stage_id": None, "interpretation": ""}
+
+    awaiting = (state or {}).get("awaiting_stage_approval") or {}
+    blocking_sid = awaiting.get("completed_stage_id")
+    if not blocking_sid:
+        return noop
+
+    # Gather candidate reply text (same sources as the marker readers).
+    candidate_texts: list[str] = []
+    if isinstance(feedback, dict):
+        for key in ("body", "raw_reply"):
+            if isinstance(feedback.get(key), str):
+                candidate_texts.append(feedback[key])
+        for r in feedback.get("replies") or []:
+            if isinstance(r, dict) and isinstance(r.get("body"), str):
+                candidate_texts.append(r["body"])
+    reply_text = "\n".join(
+        dict.fromkeys(t.strip() for t in candidate_texts if t.strip())
+    )
+    if not reply_text:
+        return noop
+
+    # Describe the gate so the model knows what "approve" would unblock.
+    stage_desc = blocking_sid
+    if isinstance(plan, dict):
+        for st in plan.get("stages") or []:
+            if st.get("id") == blocking_sid:
+                stage_desc = f"{blocking_sid} — {st.get('description', '')}".strip(" —")
+                break
+
+    prompt = f"""You interpret a user's email reply to a research assistant that is
+PAUSED at a stage-approval gate, waiting for permission to begin the next
+stage of work.
+
+The gate currently blocking progress is:
+  {stage_desc}
+
+The user's reply (verbatim):
+\"\"\"
+{reply_text[:2000]}
+\"\"\"
+
+Decide the user's intent. Be CONSERVATIVE: only approve when the reply
+clearly authorizes proceeding (e.g. "go ahead", "approve", "yes, run it").
+If the reply hedges, asks to wait, or raises a question first
+(e.g. "hold on, let me check the numbers"), that is a HOLD, not approval.
+If intent is unclear, do NOT approve.
+
+Respond with ONLY a JSON block fenced with ```json ... ``` containing:
+{{
+  "approve": true,
+  "hold": false,
+  "interpretation": "one sentence paraphrasing the user's intent"
+}}
+"""
+
+    from steward.llm import call_llm_json
+
+    try:
+        result = call_llm_json(prompt, timeout=120)
+    except Exception:
+        return noop
+
+    approve = bool(result.get("approve", False))
+    hold = bool(result.get("hold", False))
+    # A reply cannot both approve and hold; hold wins (conservative).
+    if hold:
+        approve = False
+    return {
+        "approve": approve,
+        "hold": hold,
+        "stage_id": blocking_sid if approve else None,
+        "interpretation": str(result.get("interpretation", ""))[:300],
+    }
 
 
 def apply_stage_approval(
