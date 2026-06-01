@@ -152,6 +152,10 @@ def send_ltt_email(
     narrative_spec = primary_report.get("narrative") or {}
     prefix = (
         (primary_report.get("own_email") or {}).get("prefix")
+        # plan_runner tasks have no charter.yaml; they pass their subject
+        # prefix via global_state so the sent subject and the reply-check
+        # IMAP search (which filters by this prefix) stay in sync.
+        or global_state.get("subject_prefix")
         or "[LTT]"
     )
 

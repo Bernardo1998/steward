@@ -267,6 +267,9 @@ _STATE_JSON_TEMPLATE = {
     "approved_through_stage": None,
     "email_thread_id": "",
     "last_message_id": "",
+    "last_email_date": "",
+    "subject_prefix": "",
+    "last_reply_approval_msgid": "",
     "stuck_counter": 0,
     "max_stuck_cycles": 5,
 }
